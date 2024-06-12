@@ -1,11 +1,17 @@
 
+#!/bin/bash #added by myself
+#"shebang line": this line tells the system to use the Bash shell to execute the script. It is typically included at the top of shell scripts
 
+#define and export Environment variables
 workdir=$1
 datatype=$2 # blender, hypernerf, llff
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0 #restricts the script to use only the first GPU 
+
+#remove existing directories that contains intermediate data or results from previous COLMAP runs so that a fresh sparse reconstruction is generated in the current run
+#remove also images prepared for COLMAP processing such that any old or partially processed images are removed
 rm -rf $workdir/sparse_
 rm -rf $workdir/image_colmap
-python scripts/"$datatype"2colmap.py $workdir
+python scripts/"$datatype"2colmap.py $workdir #runs a script named based on the 'datatype' variable (i.e. 'blender2colomap.py'). the script converts the dataset into a ormat that COLMAP can porcess
 rm -rf $workdir/colmap
 rm -rf $workdir/colmap/sparse/0
 

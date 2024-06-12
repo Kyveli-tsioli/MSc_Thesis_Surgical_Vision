@@ -9,7 +9,11 @@ import numpy as np
 import copy
 @torch.no_grad()
 def render_training_image(scene, gaussians, viewpoints, render_func, pipe, background, stage, iteration, time_now, dataset_type):
+    #render_training_image function responsible for rendering images from a set of viewpoints during training
+    #and saves them to disk along with the corresponding ground truth and depth images
+    #it also saves the point cloud at each iteration if needed 
     def render(gaussians, viewpoint, path, scaling, cam_type):
+        #this nested function handles the rendering process for each viewpoint
         # scaling_copy = gaussians._scaling
         render_pkg = render_func(viewpoint, gaussians, pipe, background, stage=stage, cam_type=cam_type)
         label1 = f"stage:{stage},iter:{iteration}"
@@ -21,6 +25,7 @@ def render_training_image(scene, gaussians, viewpoints, render_func, pipe, backg
         label2 = "time:%.2f" % times + end
         image = render_pkg["render"]
         depth = render_pkg["depth"]
+        opacity = render_pkg.get("opacity")  # Added 11/05
         if dataset_type == "PanopticSports":
             gt_np = viewpoint['image'].permute(1,2,0).cpu().numpy()
         else:
@@ -29,9 +34,10 @@ def render_training_image(scene, gaussians, viewpoints, render_func, pipe, backg
         depth_np = depth.permute(1, 2, 0).cpu().numpy()
         depth_np /= depth_np.max()
         depth_np = np.repeat(depth_np, 3, axis=2)
-        image_np = np.concatenate((gt_np, image_np, depth_np), axis=1)
+        image_np = np.concatenate((gt_np, image_np, depth_np), axis=1) #combined image array containing the ground truth image, rendered image and depth image
         image_with_labels = Image.fromarray((np.clip(image_np,0,1) * 255).astype('uint8'))  # 转换为8位图像
         # 创建PIL图像对象的副本以绘制标签
+        #adds labels to the images indicating the stage, iteration and elapsed time
         draw1 = ImageDraw.Draw(image_with_labels)
 
         # 选择字体和字体大小
@@ -49,6 +55,8 @@ def render_training_image(scene, gaussians, viewpoints, render_func, pipe, backg
         draw1.text(label2_position, label2, fill=text_color, font=font)
         
         image_with_labels.save(path)
+    #the base paths for saving the rendered images and point clouds are constructed here
+    #here the "coarsetest_render" and "coarsetrain_render" folders are being created most likely
     render_base_path = os.path.join(scene.model_path, f"{stage}_render")
     point_cloud_path = os.path.join(render_base_path,"pointclouds")
     image_path = os.path.join(render_base_path,"images")
@@ -61,6 +69,7 @@ def render_training_image(scene, gaussians, viewpoints, render_func, pipe, backg
     # image:3,800,800
     
     # point_save_path = os.path.join(point_cloud_path,f"{iteration}.jpg")
+    #iterate through each viewpoint and call the nested 'render' function to save the rendered images
     for idx in range(len(viewpoints)):
         image_save_path = os.path.join(image_path,f"{iteration}_{idx}.jpg")
         render(gaussians,viewpoints[idx],image_save_path,scaling = 1,cam_type=dataset_type)

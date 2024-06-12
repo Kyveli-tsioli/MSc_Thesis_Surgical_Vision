@@ -23,6 +23,9 @@ def mkdir_p(folder_path):
         else:
             raise
 
-def searchForMaxIteration(folder):
+def searchForMaxIteration(folder): #utility function
     saved_iters = [int(fname.split("_")[-1]) for fname in os.listdir(folder)]
+    #splits each filename 'fname' into parts based on the underscore '_' character
+    #[-1]: takes the last part of the split filename, which is expected to be the iteration number
+    #saved_iters is a list of integers representing the iteration numbers from the filenames
     return max(saved_iters)

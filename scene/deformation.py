@@ -13,7 +13,7 @@ from utils.graphics_utils import apply_rotation, batch_quaternion_multiply
 from scene.hexplane import HexPlaneField
 from scene.grid import DenseGrid
 # from scene.grid import HashHexPlane
-class Deformation(nn.Module):
+class Deformation(nn.Module): #MLPs to predict deformations, scales, rotations, opacity and SH coefficients for the points in the scene
     def __init__(self, D=8, W=256, input_ch=27, input_ch_time=9, grid_pe=0, skips=[], args=None):
         super(Deformation, self).__init__()
         self.D = D
@@ -23,7 +23,8 @@ class Deformation(nn.Module):
         self.skips = skips
         self.grid_pe = grid_pe
         self.no_grid = args.no_grid
-        self.grid = HexPlaneField(args.bounds, args.kplanes_config, args.multires)
+        self.grid = HexPlaneField(args.bounds, args.kplanes_config, args.multires) #3D spatial info is stored in a series of 2D planes 
+        # this structure allows for efficient querying and interpolation of spatial features
         # breakpoint()
         self.args = args
         # self.args.empty_voxel=True
@@ -37,12 +38,12 @@ class Deformation(nn.Module):
     @property
     def get_aabb(self):
         return self.grid.get_aabb
-    def set_aabb(self, xyz_max, xyz_min):
+    def set_aabb(self, xyz_max, xyz_min): #sets the axis-aligned bounding box for the deformation grid 
         print("Deformation Net Set aabb",xyz_max, xyz_min)
         self.grid.set_aabb(xyz_max, xyz_min)
         if self.args.empty_voxel:
             self.empty_voxel.set_aabb(xyz_max, xyz_min)
-    def create_net(self):
+    def create_net(self): #creates the network layers for deformation parameters: position, scales, rotations, opacity and SH
         mlp_out_dim = 0
         if self.grid_pe !=0:
             
@@ -58,23 +59,23 @@ class Deformation(nn.Module):
             self.feature_out.append(nn.ReLU())
             self.feature_out.append(nn.Linear(self.W,self.W))
         self.feature_out = nn.Sequential(*self.feature_out)
-        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 3))
-        self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 3))
-        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 4))
-        self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))
-        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 16*3))
+        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 3)) #layers for position
+        self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 3)) #layers for scale 
+        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 4)) #layers for rotation
+        self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1)) #layers for opacity
+        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 16*3)) #layers for spherical harmonics 
 
-    def query_time(self, rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb):
+    def query_time(self, rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb): #query features from the HexPlane or voxel grid given the embedded coordinates and time
 
-        if self.no_grid:
-            h = torch.cat([rays_pts_emb[:,:3],time_emb[:,:1]],-1)
-        else:
+        if self.no_grid: #concatenates the spatial coordinates and the first component of the time embedding 
+            h = torch.cat([rays_pts_emb[:,:3],time_emb[:,:1]],-1) #rays_pts_emb: embedded spatial coordinates
+        else: #query the HexPlane or vocel grid using the spatial coordinates and time embedding 
 
             grid_feature = self.grid(rays_pts_emb[:,:3], time_emb[:,:1])
             # breakpoint()
             if self.grid_pe > 1:
-                grid_feature = poc_fre(grid_feature,self.grid_pe)
-            hidden = torch.cat([grid_feature],-1) 
+                grid_feature = poc_fre(grid_feature,self.grid_pe) #applies positional encoding 
+            hidden = torch.cat([grid_feature],-1) #Concatenates the features and passes the through the MLP layers
         
         
         hidden = self.feature_out(hidden)   

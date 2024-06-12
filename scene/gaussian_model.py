@@ -8,6 +8,8 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+import matplotlib.pyplot as plt #added by me June 3rd 
+from pathlib import Path #added by me June 3rd 
 
 import torch
 import numpy as np
@@ -31,7 +33,7 @@ class GaussianModel:
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
             actual_covariance = L @ L.transpose(1, 2)
-            symm = strip_symmetric(actual_covariance)
+            symm = strip_symmetric(actual_covariance) #ensure cov matrix is symmetric
             return symm
         
         self.scaling_activation = torch.exp
@@ -46,37 +48,42 @@ class GaussianModel:
 
 
     def __init__(self, sh_degree : int, args):
-        self.active_sh_degree = 0
+        #to INITIALISE the GaussianModel isntance with default values and set up necessary attributes
+        #this method is called when a new instance of the model is created 
+        self.active_sh_degree = 0 #determines the level of detail used in the current model which can be adjusted during training
+        #to improve the representation and detail as needed
         self.max_sh_degree = sh_degree  
-        self._xyz = torch.empty(0)
+        #each 3D Gaussian is characterized by the following attributes: 
+        #POSITION, COLOUR defined by spherical harmonic coefficients, OPACITY, ROTATION FACTOR, SCALING FACTOR 
+        self._xyz = torch.empty(0) #holds the positions of Gaussians
         # self._deformation =  torch.empty(0)
-        self._deformation = deform_network(args)
+        self._deformation = deform_network(args) #network for modeling deformation over time (initialised with args)
         # self.grid = TriPlaneGrid()
-        self._features_dc = torch.empty(0)
-        self._features_rest = torch.empty(0)
-        self._scaling = torch.empty(0)
+        self._features_dc = torch.empty(0) #current features (color)
+        self._features_rest = torch.empty(0) #residual features ??
+        self._scaling = torch.empty(0) #scaling factors for each gaussian
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
-        self.max_radii2D = torch.empty(0)
-        self.xyz_gradient_accum = torch.empty(0)
-        self.denom = torch.empty(0)
+        self.max_radii2D = torch.empty(0) #keep track of the max radius of 2D gaussian splat (determines the spatial extend of a gaussian splat) to decide which ones can be pruned
+        self.xyz_gradient_accum = torch.empty(0) #accumulated gradients for positions
+        self.denom = torch.empty(0) #denominator for normalisation
         self.optimizer = None
-        self.percent_dense = 0
+        self.percent_dense = 0 
         self.spatial_lr_scale = 0
         self._deformation_table = torch.empty(0)
         self.setup_functions()
 
-    def capture(self):
+    def capture(self): #to SAVE the current state of the model (enable checkpointing during training)
         return (
-            self.active_sh_degree,
-            self._xyz,
-            self._deformation.state_dict(),
+            self.active_sh_degree, #captures the current spherical harmonics degree 
+            self._xyz, #stores the position of all gaussians
+            self._deformation.state_dict(), #captures the state of the deformation network
             self._deformation_table,
             # self.grid,
-            self._features_dc,
+            self._features_dc, #stores the color info
             self._features_rest,
-            self._scaling,
-            self._rotation,
+            self._scaling, #stores scaling factors 
+            self._rotation, #rotation matrices (stores orientation of each gaussian)
             self._opacity,
             self.max_radii2D,
             self.xyz_gradient_accum,
@@ -85,6 +92,8 @@ class GaussianModel:
             self.spatial_lr_scale,
         )
     
+    #restore method to LOAD (checkpoints) a saved state of the GaussianModel, it reconstructs the model from previously saved parameters allowing the training to resume from a specific point
+    #crucial method for resuming interrupted training sessions or for evaluating a saved model
     def restore(self, model_args, training_args):
         (self.active_sh_degree, 
         self._xyz, 
@@ -103,7 +112,7 @@ class GaussianModel:
         opt_dict, 
         self.spatial_lr_scale) = model_args
         self._deformation.load_state_dict(deform_state)
-        self.training_setup(training_args)
+        self.training_setup(training_args) #sets up training configurations using training_args
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
@@ -124,31 +133,34 @@ class GaussianModel:
     def get_features(self):
         features_dc = self._features_dc
         features_rest = self._features_rest
-        return torch.cat((features_dc, features_rest), dim=1)
+        return torch.cat((features_dc, features_rest), dim=1) #provides a comprehensive set of features for each gaussian essential for accurate 
+    #rendering and representation of the scene
     
     @property
     def get_opacity(self):
-        return self.opacity_activation(self._opacity)
+        return self.opacity_activation(self._opacity) #returns the transformed opacity values for each gaussian
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
-    def oneupSHdegree(self):
+    def oneupSHdegree(self): #increment the SH degree to allow the model to capture more detailed angular variations in light and color
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
+            #starts with a lower complexity to speed up initial training and then gradually increases the detail to capture finer details in the scene as the model improces
 
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float, time_line: int):
-        self.spatial_lr_scale = spatial_lr_scale
+        #initialises the GaussianModel from a point cloud
+        self.spatial_lr_scale = spatial_lr_scale #set the learning rate scale for spatial parameters to control how quickly spatial parameters are updated
         # breakpoint()
-        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
-        fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
-        features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
-        features[:, :3, 0 ] = fused_color
+        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda() #converts point cloud coordinates from the 'pcd' object to a pytorch tensor and transfers it to the GPU
+        fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda()) #converts the RGB colors of the point cloud to their SH representation and transfers them to the GPU
+        features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda() #stores the spherical harmonics coefficients that represent the color info for each point in the point cloud
+        features[:, :3, 0 ] = fused_color #assign color to features
         features[:, 3:, 1:] = 0.0
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
-        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
+        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001) #computes the squared distances between points in the point cloud
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
@@ -158,6 +170,7 @@ class GaussianModel:
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._deformation = self._deformation.to("cuda") 
         # self.grid = self.grid.to("cuda")
+        #converts tensors to model parameters with gradients enabled (requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
@@ -166,12 +179,14 @@ class GaussianModel:
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self._deformation_table = torch.gt(torch.ones((self.get_xyz.shape[0]),device="cuda"),0)
     def training_setup(self, training_args):
-        self.percent_dense = training_args.percent_dense
+        #initialises various training parameters and the optimizer for the GaussianModel
+        self.percent_dense = training_args.percent_dense #sets the percentage of gaussians that will be actively used in training
+        #initialises tensors for accumulating gradients and denominators for normalisation during training
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self._deformation_accum = torch.zeros((self.get_xyz.shape[0],3),device="cuda")
         
-
+        #preparing parameter groups for optimiser, each group corresponds to a different aspect of the model (positions, deformation, grid, features, opacity, scaling, rotation)
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
             {'params': list(self._deformation.get_mlp_parameters()), 'lr': training_args.deformation_lr_init * self.spatial_lr_scale, "name": "deformation"},
@@ -183,7 +198,7 @@ class GaussianModel:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
             
         ]
-
+        #sets up exponential learning rate schedulers for the position, deormation and grid parameters 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
@@ -214,8 +229,8 @@ class GaussianModel:
                 param_group['lr'] = lr
                 # return lr
 
-    def construct_list_of_attributes(self):
-        l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
+    def construct_list_of_attributes(self): #generates a comprehensive list of attribute names for each gaussian
+        l = ['x', 'y', 'z', 'nx', 'ny', 'nz'] #basic positional and normal coordinates
         # All channels except the 3 DC
         for i in range(self._features_dc.shape[1]*self._features_dc.shape[2]):
             l.append('f_dc_{}'.format(i))
@@ -228,24 +243,27 @@ class GaussianModel:
             l.append('rot_{}'.format(i))
         return l
     def compute_deformation(self,time):
-        
-        deform = self._deformation[:,:,:time].sum(dim=-1)
-        xyz = self._xyz + deform
+        #deformation of gaussians over time and updates their position
+        deform = self._deformation[:,:,:time].sum(dim=-1) #sums the deformation vectors up to the specified time step
+        xyz = self._xyz + deform #adds the deformation to the original positions (self._xyz) to get the updated positions
         return xyz
     # def save_ply_dynamic(path):
     #     for time in range(self._deformation.shape(-1)):
     #         xyz = self.compute_deformation(time)
     def load_model(self, path):
-        print("loading model from exists{}".format(path))
-        weight_dict = torch.load(os.path.join(path,"deformation.pth"),map_location="cuda")
+        print("loading model from exists{}".format(path)) #the path from which the model is being loaded
+        weight_dict = torch.load(os.path.join(path,"deformation.pth"),map_location="cuda") #loads the deformation network's weights from 'deformation.pth' and transfers them to the GPU
+        #deformation table and accumulator:
+        #load them from their respective files ensures that the model can resume its defomration behavior accurately based on previously saved states
+        #the deformation table keeps track of which gaussians are actively undergoing deformation
         self._deformation.load_state_dict(weight_dict)
         self._deformation = self._deformation.to("cuda")
         self._deformation_table = torch.gt(torch.ones((self.get_xyz.shape[0]),device="cuda"),0)
         self._deformation_accum = torch.zeros((self.get_xyz.shape[0],3),device="cuda")
-        if os.path.exists(os.path.join(path, "deformation_table.pth")):
+        if os.path.exists(os.path.join(path, "deformation_table.pth")): #loading logic: if the file 'deformation_table.pth' exists, it loads this table from the file to resume the exact deformation states from the previous training session
             self._deformation_table = torch.load(os.path.join(path, "deformation_table.pth"),map_location="cuda")
         if os.path.exists(os.path.join(path, "deformation_accum.pth")):
-            self._deformation_accum = torch.load(os.path.join(path, "deformation_accum.pth"),map_location="cuda")
+            self._deformation_accum = torch.load(os.path.join(path, "deformation_accum.pth"),map_location="cuda") #torch.load to load the saved tensors ensuring they are moved to the GPU 
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         # print(self._deformation.deformation_net.grid.)
     def save_deformation(self, path):
@@ -253,10 +271,11 @@ class GaussianModel:
         torch.save(self._deformation_table,os.path.join(path, "deformation_table.pth"))
         torch.save(self._deformation_accum,os.path.join(path, "deformation_accum.pth"))
     def save_ply(self, path):
+        #saves the current state of the model in PLY format (standard format for storing 3D data)
         mkdir_p(os.path.dirname(path))
 
-        xyz = self._xyz.detach().cpu().numpy()
-        normals = np.zeros_like(xyz)
+        xyz = self._xyz.detach().cpu().numpy() #positions of the points 
+        normals = np.zeros_like(xyz) #store normal vectors 
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         opacities = self._opacity.detach().cpu().numpy()
@@ -265,16 +284,20 @@ class GaussianModel:
         
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
-        elements = np.empty(xyz.shape[0], dtype=dtype_full)
+        elements = np.empty(xyz.shape[0], dtype=dtype_full) #comvines all attributes into a structured array
         attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
         
     def reset_opacity(self):
+        #opacity values might drift due to transformations and updates so resetting ensures the opacity value are within a stable range 
+        #first rransform values back from the normalised range to their original scale
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
-        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
-        self._opacity = optimizable_tensors["opacity"]
+        #capping at 0.01 provides control over the max opacity maintaining desired transparency levels
+        #in rendering we prefer low opacity values to ensure that gaussians remain semi-transparent which helps in blending
+        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity") #updates the optimiser to use the new opacity values 
+        self._opacity = optimizable_tensors["opacity"] #updates the model's internal 'opacity' attribute to use the new tensor
 
     def load_ply(self, path):
         plydata = PlyData.read(path)
@@ -282,7 +305,7 @@ class GaussianModel:
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
                         np.asarray(plydata.elements[0]["y"]),
                         np.asarray(plydata.elements[0]["z"])),  axis=1)
-        opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
+        opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis] #extract opacities
 
         features_dc = np.zeros((xyz.shape[0], 3, 1))
         features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
@@ -310,6 +333,7 @@ class GaussianModel:
         for idx, attr_name in enumerate(rot_names):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
+        #convert data to tensors
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
@@ -334,6 +358,8 @@ class GaussianModel:
         return optimizable_tensors
 
     def _prune_optimizer(self, mask):
+        #handles the removal (pruning) of certain Gaussian components
+
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
             if len(group["params"]) > 1:
@@ -492,18 +518,24 @@ class GaussianModel:
         #     o3d.io.write_point_cloud(os.path.join(write_path,f"iteration_{stage}{iteration}.ply"),point)
         #     print("write output.")
     @property
-    def get_aabb(self):
+    def get_aabb(self): #axis-aligned bounding box is a bounding box that is aligned with the coordinate axes
+        #represents the spatial extent of an object or a set of objects
+        #spatial extent: represents the spatial limits of the deformation applied to the points in the scene
         return self._deformation.get_aabb
-    def get_displayment(self,selected_point, point, perturb):
-        xyz_max, xyz_min = self.get_aabb
-        displacements = torch.randn(selected_point.shape[0], 3).to(selected_point) * perturb
-        final_point = selected_point + displacements
+    
 
+    def get_displayment(self,selected_point, point, perturb):#generates new positions for selected point by adding random displacements ensuring they stay within the axis-aligned bounding boxes
+        xyz_max, xyz_min = self.get_aabb
+        displacements = torch.randn(selected_point.shape[0], 3).to(selected_point) * perturb #generate random displacemetns for each selected point
+        final_point = selected_point + displacements #adds the random disp;acements to the selected points to get the new positions 
+
+        #ensure the new positions stay within the AABB
         mask_a = final_point<xyz_max 
         mask_b = final_point>xyz_min
         mask_c = mask_a & mask_b
         mask_d = mask_c.all(dim=1)
         final_point = final_point[mask_d]
+        #in gaussian splatting, adding random points is for densification: increase the number of points to improve the representation and detail of the scene
     
         # while (mask_d.sum()/final_point.shape[0])<0.5:
         #     perturb/=2
@@ -515,8 +547,11 @@ class GaussianModel:
         #     mask_d = mask_c.all(dim=1)
         #     final_point = final_point[mask_d]
         return final_point, mask_d    
-    def add_point_by_mask(self, selected_pts_mask, perturb=0):
-        selected_xyz = self._xyz[selected_pts_mask] 
+    
+
+    def add_point_by_mask(self, selected_pts_mask, perturb=0): #to add new points to the Gaussian model based on a selection mask, ensuring that these 
+        #new points are valid and enhacing the model's density and detai;
+        selected_xyz = self._xyz[selected_pts_mask] #selects point from the current set based on the provided mas
         new_xyz, mask = self.get_displayment(selected_xyz, self.get_xyz.detach(),perturb)
         # displacements = torch.randn(selected_xyz.shape[0], 3).to(self._xyz) * perturb
 
@@ -671,3 +706,24 @@ class GaussianModel:
         return total
     def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight):
         return plane_tv_weight * self._plane_regulation() + time_smoothness_weight * self._time_regulation() + l1_time_planes_weight * self._l1_regulation()
+
+
+#added by me 3 June
+def plot_opacity_custom(model, output_dir, index=0):
+    # Ensure output directory exists
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    opacity_values= model.get_opacity.detach().cpu().numpy()
+    print("opacity values:", opacity_values)
+
+    plt.figure(figsize=(10,10))
+    plt.imshow(opacity_values, cmap='jet', aspect='auto')
+    plt.colorbar(label='opacity')
+    plt.title('Gaussian Opacity')
+    plt.xlabel("Gaussians")
+    plt.ylabel('Opacity Value')
+
+    #save the plot
+    plt.savefig(Path(output_dir)/ f"{index}_opacity.png")
+    plt.close()
+
+

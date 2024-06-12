@@ -9,11 +9,17 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+
+##'Camera' and 'MiniCam' for handling camera peroperties and transformations essential for rendering scenes from different viewpoints.
+
 import torch
 from torch import nn
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 
+
+#Camera: manages the trasformations required to convert 3D points in the scene to 2D image coordinates for splatting 
+#this is to ensure that the rendering pipeline can project the Gaussian splats into the image space taking into account the camera's position, orientation and field of view
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
                  image_name, uid,
@@ -24,10 +30,10 @@ class Camera(nn.Module):
 
         self.uid = uid
         self.colmap_id = colmap_id
-        self.R = R
-        self.T = T
-        self.FoVx = FoVx
-        self.FoVy = FoVy
+        self.R = R #extrinsic (camera's orientation and position in the world)
+        self.T = T #extrinsic 
+        self.FoVx = FoVx #intrinsic 
+        self.FoVy = FoVy #intrinsic 
         self.image_name = image_name
         self.time = time
         try:
@@ -39,8 +45,8 @@ class Camera(nn.Module):
         self.original_image = image.clamp(0.0, 1.0)[:3,:,:]
         # breakpoint()
         # .to(self.data_device)
-        self.image_width = self.original_image.shape[2]
-        self.image_height = self.original_image.shape[1]
+        self.image_width = self.original_image.shape[2] #intrinsic
+        self.image_height = self.original_image.shape[1] #intrinsic 
 
         if gt_alpha_mask is not None:
             self.original_image *= gt_alpha_mask

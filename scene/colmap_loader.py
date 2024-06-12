@@ -9,6 +9,12 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+
+##Read and Process data from COLMAP.
+##When initialising a 'Scene' object in 'scene.py', the script detects COLMAP datasets and uses these functions to load camera and point cloud data.
+#The loaded camera parameters and 3D points are used to configure the 'Gaussianodel' and set up the training cameras, test cameras and video cameras.
+#The intrinsic and extrinsic parameters are crucial for rendering scenes from various viewpoints.
+#The 3D points (Point3D) and their properties are used to create the Gaussian model, which forms the basis for 4D Gaussian splatting.
 import numpy as np
 import collections
 import struct
@@ -40,7 +46,7 @@ CAMERA_MODEL_NAMES = dict([(camera_model.model_name, camera_model)
                            for camera_model in CAMERA_MODELS])
 
 
-def qvec2rotmat(qvec):
+def qvec2rotmat(qvec): #for handling camera orientations
     return np.array([
         [1 - 2 * qvec[2]**2 - 2 * qvec[3]**2,
          2 * qvec[1] * qvec[2] - 2 * qvec[0] * qvec[3],
@@ -52,7 +58,7 @@ def qvec2rotmat(qvec):
          2 * qvec[2] * qvec[3] + 2 * qvec[0] * qvec[1],
          1 - 2 * qvec[1]**2 - 2 * qvec[2]**2]])
 
-def rotmat2qvec(R):
+def rotmat2qvec(R): #for handling camera orientations 
     Rxx, Ryx, Rzx, Rxy, Ryy, Rzy, Rxz, Ryz, Rzz = R.flat
     K = np.array([
         [Rxx - Ryy - Rzz, 0, 0, 0],

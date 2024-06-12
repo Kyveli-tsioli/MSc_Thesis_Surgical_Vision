@@ -14,14 +14,14 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
 import lpips
-def lpips_loss(img1, img2, lpips_model):
+def lpips_loss(img1, img2, lpips_model): #uses a pre-trained net to compute perceptual similarity (focus on high-level features rathen than pixel-wise differences)
     loss = lpips_model(img1,img2)
     return loss.mean()
 def l1_loss(network_output, gt):
-    return torch.abs((network_output - gt)).mean()
+    return torch.abs((network_output - gt)).mean() #mean absolute error: optimise the rendered images to match ground truth images 
 
 def l2_loss(network_output, gt):
-    return ((network_output - gt) ** 2).mean()
+    return ((network_output - gt) ** 2).mean() #mean squared error between the networ output and the ground truth (for penalising large deviations in pixel values)
 
 def gaussian(window_size, sigma):
     gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
@@ -43,7 +43,7 @@ def ssim(img1, img2, window_size=11, size_average=True):
 
     return _ssim(img1, img2, window, window_size, channel, size_average)
 
-def _ssim(img1, img2, window, window_size, channel, size_average=True):
+def _ssim(img1, img2, window, window_size, channel, size_average=True): #measures similarity between two images, focusing on strcutural info (perceptual similarity)
     mu1 = F.conv2d(img1, window, padding=window_size // 2, groups=channel)
     mu2 = F.conv2d(img2, window, padding=window_size // 2, groups=channel)
 

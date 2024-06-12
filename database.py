@@ -4,6 +4,9 @@ import sys
 import numpy as np
 import sqlite3
 
+
+
+#Script for managing the COLMAP databse (stores info  relatedd to camera models, images, keypoints, matches from structure from motion)
 IS_PYTHON3 = sys.version_info[0] >= 3
 
 def array_to_blob(array):

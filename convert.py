@@ -15,6 +15,8 @@ from argparse import ArgumentParser
 import shutil
 
 # This Python script is based on the shell converter script provided in the MipNerF 360 repository.
+
+#set up an arguent parser to handle command-line inputs
 parser = ArgumentParser("Colmap converter")
 parser.add_argument("--no_gpu", action='store_true')
 parser.add_argument("--skip_matching", action='store_true')
@@ -28,10 +30,11 @@ colmap_command = '"{}"'.format(args.colmap_executable) if len(args.colmap_execut
 magick_command = '"{}"'.format(args.magick_executable) if len(args.magick_executable) > 0 else "magick"
 use_gpu = 1 if not args.no_gpu else 0
 
-if not args.skip_matching:
+if not args.skip_matching: #if feature matching is not skipped, the script extracts features from images using COLMAP
     os.makedirs(args.source_path + "/distorted/sparse", exist_ok=True)
 
     ## Feature extraction
+    #detext and describe featues in the images
     feat_extracton_cmd = colmap_command + " feature_extractor "\
         "--database_path " + args.source_path + "/distorted/database.db \
         --image_path " + args.source_path + "/input \
@@ -43,7 +46,9 @@ if not args.skip_matching:
         logging.error(f"Feature extraction failed with code {exit_code}. Exiting.")
         exit(exit_code)
 
-    ## Feature matching
+    ## Feature matching 
+        #between images 
+        ##corrsponding points between consecutive images are identified, these correspondences are essential for estimating the initial camera poses and 3D points
     feat_matching_cmd = colmap_command + " exhaustive_matcher \
         --database_path " + args.source_path + "/distorted/database.db \
         --SiftMatching.use_gpu " + str(use_gpu)
@@ -55,6 +60,11 @@ if not args.skip_matching:
     ### Bundle adjustment
     # The default Mapper tolerance is unnecessarily large,
     # decreasing it speeds up bundle adjustment steps.
+        
+
+        ##bundle adjustment optimises the camera poses and 3D points to minimise the reprojection error (difference between the observed image points and the projected 3D points onto the image planes)
+        #this process refines the camera parameters (intrinsic and extrinsic) and the 3D point positions to achieve a more accurate 3D reconstruction
+        ##so budne adjustment refines camera poses and 3D point positions 
     mapper_cmd = (colmap_command + " mapper \
         --database_path " + args.source_path + "/distorted/database.db \
         --image_path "  + args.source_path + "/input \
@@ -67,6 +77,8 @@ if not args.skip_matching:
 
 ### Image undistortion
 ## We need to undistort our images into ideal pinhole intrinsics.
+        ##image undistortion corrects distortions in images caused by the camera lens (such as straight lines to appear curved in the image). the undistortion process corrects these artifacts
+        ##transforming the image to match what would be captured by an ideal pinhole camera model.
 img_undist_cmd = (colmap_command + " image_undistorter \
     --image_path " + args.source_path + "/input \
     --input_path " + args.source_path + "/distorted/sparse/0 \

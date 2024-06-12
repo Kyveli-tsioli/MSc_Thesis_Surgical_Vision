@@ -43,13 +43,15 @@ def multithread_write(image_list, path):
         if status == False:
             write_image(image_list[index], index, path)
     
-to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
-def render_set(model_path, name, iteration, views, gaussians, pipeline, background, cam_type):
-    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
-    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8) #converts torch tensors to 8-bit numpy arrays
+def render_set(model_path, name, iteration, views, gaussians, pipeline, background, cam_type): #performs rendering for a given set of views using GS 
+    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders") #rendered images
+    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt") #ground truth images saved to disk
+    opacity_path = os.path.join(model_path, name, "ours_{}".format(iteration), "opacity") # path to save opacity maps #added 
 
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
+    makedirs(opacity_path, exist_ok=True) #added
     render_images = []
     gt_list = []
     render_list = []

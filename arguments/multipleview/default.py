@@ -15,7 +15,7 @@ ModelHiddenParams = dict(
     no_dshs=False,
     no_ds=False,
     empty_voxel=False,
-    render_process=False,
+    render_process=True,  #was False initially
     static_mlp=False
 
 )

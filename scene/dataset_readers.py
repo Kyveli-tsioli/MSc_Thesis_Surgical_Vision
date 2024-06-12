@@ -9,6 +9,16 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+
+###Construct the CameraInfo object which stores info about each camera (rotation matrix of the camera (i.e. orientation), translation vector (i.e. position of the camera),
+#field of view in x and y directions, image data associated with the camera, name of the image file, width of the image, height of the image, time based on the order of the camera, mask
+
+###Construct SceneInfo object that includes training and testing camera info and normalisation params
+#this means: point cloud data from the scene,list of training 'CameraInfo' objects, list of testing 'CameraInfo' objects
+#list of cameras used for video generation (same as training cameras in this context)
+#normalisation arams for the camera coordinates and path to the PLY file containing the point cloud data
+
+
 import os
 import sys
 from PIL import Image
@@ -30,7 +40,8 @@ from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
 from utils.general_utils import PILtoTorch
 from tqdm import tqdm
-class CameraInfo(NamedTuple):
+
+class CameraInfo(NamedTuple): #holds info about the camera (rotation,translation, field of view, image data)
     uid: int
     R: np.array
     T: np.array
@@ -44,7 +55,7 @@ class CameraInfo(NamedTuple):
     time : float
     mask: np.array
    
-class SceneInfo(NamedTuple):
+class SceneInfo(NamedTuple): #holds info about the entire scene including point clouds, train/test/video cameras, normalisation params and path to the ply file
     point_cloud: BasicPointCloud
     train_cameras: list
     test_cameras: list
@@ -55,6 +66,8 @@ class SceneInfo(NamedTuple):
 
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
+        #centering the camera positions so that center of all cameras is at the origin of the coordinate system
+        #and scaling to ensure that the entire scene is visible and that it fits the camera's field of view
         cam_centers = np.hstack(cam_centers)
         avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)
         center = avg_cam_center
@@ -76,7 +89,8 @@ def getNerfppNorm(cam_info):
     # breakpoint()
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder): #images-_folder: the folder path where the images corresponding to the cameras are stored
+    #reads camera extrinsic and intrinsics from COLMAP files and constructs 'CameraInfo' objects which contain info about each camera (parameters and the corresponding image)
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -92,7 +106,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         uid = intr.id
         R = np.transpose(qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
-
+        #compute the field of view based on the camera model
         if intr.model in ["SIMPLE_PINHOLE", "SIMPLE_RADIAL"]:
             focal_length_x = intr.params[0]
             FovY = focal2fov(focal_length_x, height)
@@ -109,11 +123,17 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
             FovX = focal2fov(focal_length_x, width)
         else:
             assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
-
+        #construct the file path to the image associated with the current camera
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
+        print(f"Attempting to open image at: {image_path}")  # Debugging output added that
+
+        if not os.path.exists(image_path):
+            print(f"Image does not exist: {image_path}") #error debugging
+
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
         image = PILtoTorch(image,None)
+        #each camera is associagted with its corresponding image and intrinsic parameters
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height,
                               time = float(idx/len(cam_extrinsics)), mask=None) # default by monocular settings.
@@ -121,7 +141,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
     sys.stdout.write('\n')
     return cam_infos
 
-def fetchPly(path):
+def fetchPly(path): #reads point cloud data from a PLY file
     plydata = PlyData.read(path)
     vertices = plydata['vertex']
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
@@ -129,7 +149,7 @@ def fetchPly(path):
     normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
-def storePly(path, xyz, rgb):
+def storePly(path, xyz, rgb): #writes point cloud data to a PLY file
     # Define the dtype for the structured array
     dtype = [('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
             ('nx', 'f4'), ('ny', 'f4'), ('nz', 'f4'),
@@ -148,6 +168,7 @@ def storePly(path, xyz, rgb):
     ply_data.write(path)
 
 def readColmapSceneInfo(path, images, eval, llffhold=8):
+    #reads COLMAP scene info, including camera parameters and point cloud data
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -158,10 +179,12 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
+    #added now
+    reading_dir = os.path.join(path, "images") if images is None else images
 
-    reading_dir = "images" if images == None else images
+    #reading_dir = "images" if images == None else images
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
-    cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
+    cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name) #ordering helps avoid mismatches between images and their corresponding camera parameters
     # breakpoint()
     if eval:
         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
@@ -170,7 +193,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         train_cam_infos = cam_infos
         test_cam_infos = []
 
-    nerf_normalization = getNerfppNorm(train_cam_infos)
+    nerf_normalization = getNerfppNorm(train_cam_infos) #transform the camera coordinates to a normalized step to ensure the input to the odel is in a consistent range for stabilising and improving convegence (check NeRF paper)
 
     ply_path = os.path.join(path, "sparse/0/points3D.ply")
     bin_path = os.path.join(path, "sparse/0/points3D.bin")
@@ -215,7 +238,8 @@ def generateCamerasFromTransforms(path, template_transformsfile, extension, maxt
         [0,1,0,0],
         [np.sin(th),0, np.cos(th),0],
         [0,0,0,1]]).float()
-    def pose_spherical(theta, phi, radius):
+    def pose_spherical(theta, phi, radius): #generates a camera to world transformation matrix for a camera positioned on a spherical coordinate system with give theta, phi angles and radius
+        #this places the camera at a specific point in the world space and orients it towards the scene
         c2w = trans_t(radius)
         c2w = rot_phi(phi/180.*np.pi) @ c2w
         c2w = rot_theta(theta/180.*np.pi) @ c2w
@@ -223,12 +247,16 @@ def generateCamerasFromTransforms(path, template_transformsfile, extension, maxt
         return c2w
     cam_infos = []
     # generate render poses and times
-    render_poses = torch.stack([pose_spherical(angle, -30.0, 4.0) for angle in np.linspace(-180,180,160+1)[:-1]], 0)
-    render_times = torch.linspace(0,maxtime,render_poses.shape[0])
+    #render_poses: a sequence of camera poses is generated by varying the theta angle. this simulates a camera orbiting around the scene
+    #this is pose generation: render_poses creates a set of novel camera poses (i.e. viewpoints) on a spherical path around the scene
+    #these render poses are computed in spherical coordinates using the rotation (angles) and translation (radius) to define the camera's position and orientation in the world coordinate system
+    render_poses = torch.stack([pose_spherical(angle, -30.0, 4.0) for angle in np.linspace(-180,180,160+1)[:-1]], 0) 
+    #associates each pose with a specific time value for temporal simulation
+    render_times = torch.linspace(0,maxtime,render_poses.shape[0]) #generates a sequence of time values linearly spaced between 0 and maxtime (temporal aspects of the scene)
     with open(os.path.join(path, template_transformsfile)) as json_file:
-        template_json = json.load(json_file)
+        template_json = json.load(json_file) #read JSON file to extract camera intrinsic (i.e. field of view)
         try:
-            fovx = template_json["camera_angle_x"]
+            fovx = template_json["camera_angle_x"] 
         except:
             fovx = focal2fov(template_json["fl_x"], template_json['w'])
     print("hello!!!!")
@@ -242,13 +270,21 @@ def generateCamerasFromTransforms(path, template_transformsfile, extension, maxt
         im_data = np.array(image.convert("RGBA"))
         image = PILtoTorch(image,(800,800))
         break
+
     # format information
+    #now to render the scene from these viewpoints we compute the inverse of each poses's transformation matrix
+    #this inversion transforms the poses from the world coordinate system to the camera coordinate system
+    #crucial step for understanding how the scene should be viewed from each camera's perspective
+    #transformation computation: computes the transformation matrices to convert form world coordinates to camera coordinates
     for idx, (time, poses) in enumerate(zip(render_times,render_poses)):
         time = time/maxtime
-        matrix = np.linalg.inv(np.array(poses))
+        #tranformations: computes the inverse of the pose matrix to get the transformation from the world coordinate to the camera coordinate system
+        matrix = np.linalg.inv(np.array(poses)) 
         R = -np.transpose(matrix[:3,:3])
+        #extract rotation and translation from the transformation matrix
         R[:,0] = -R[:,0]
         T = -matrix[:3, 3]
+
         fovy = focal2fov(fov2focal(fovx, image.shape[1]), image.shape[2])
         FovY = fovy 
         FovX = fovx
@@ -257,6 +293,8 @@ def generateCamerasFromTransforms(path, template_transformsfile, extension, maxt
                             time = time, mask=None))
     return cam_infos
 def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png", mapper = {}):
+    #reads camera data from a transforms file
+    #the focus here is in converting existing camera and image data applying normalisation and preparing the data for rendering or training
     cam_infos = []
 
     with open(os.path.join(path, transformsfile)) as json_file:
@@ -286,6 +324,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
             image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
             image = PILtoTorch(image,(800,800))
+            #calculate the field of view based on image dimensions and focal lengths
             fovy = focal2fov(fov2focal(fovx, image.shape[1]), image.shape[2])
             FovY = fovy 
             FovX = fovx
@@ -295,7 +334,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
                             time = time, mask=None))
             
     return cam_infos
-def read_timeline(path):
+def read_timeline(path): #reads and maps timestamps from transform JSON files
     with open(os.path.join(path, "transforms_train.json")) as json_file:
         train_json = json.load(json_file)
     with open(os.path.join(path, "transforms_test.json")) as json_file:
@@ -371,7 +410,8 @@ def format_infos(dataset,split):
     return cameras
 
 
-def readHyperDataInfos(datadir,use_bg_points,eval):
+def readHyperDataInfos(datadir,use_bg_points,eval): #loads and processes camera and point cloud data from the specified dataset directory
+    #load the training and test camera info from the specified directory 'datadir'
     train_cam_infos = Load_hyper_data(datadir,0.5,use_bg_points,split ="train")
     test_cam_infos = Load_hyper_data(datadir,0.5,use_bg_points,split="test")
     print("load finished")
@@ -384,7 +424,7 @@ def readHyperDataInfos(datadir,use_bg_points,eval):
 
     ply_path = os.path.join(datadir, "points3D_downsample2.ply")
     pcd = fetchPly(ply_path)
-    xyz = np.array(pcd.points)
+    xyz = np.array(pcd.points) #convert point cloud data to a numpy array
 
     pcd = pcd._replace(points=xyz)
     nerf_normalization = getNerfppNorm(train_cam)
@@ -424,7 +464,7 @@ def format_render_poses(poses,data_infos):
                             time = time, mask=None))
     return cameras
 
-def add_points(pointsclouds, xyz_min, xyz_max):
+def add_points(pointsclouds, xyz_min, xyz_max): #adds random points to the point cloud data for data augmentation
     add_points = (np.random.random((100000, 3)))* (xyz_max-xyz_min) + xyz_min
     add_points = add_points.astype(np.float32)
     addcolors = np.random.random((100000, 3)).astype(np.float32)
@@ -485,13 +525,15 @@ def readdynerfInfo(datadir,use_bg_points,eval):
 def setup_camera(w, h, k, w2c, near=0.01, far=100):
     from diff_gaussian_rasterization import GaussianRasterizationSettings as Camera
     fx, fy, cx, cy = k[0][0], k[1][1], k[0][2], k[1][2]
-    w2c = torch.tensor(w2c).cuda().float()
-    cam_center = torch.inverse(w2c)[:3, 3]
+    w2c = torch.tensor(w2c).cuda().float() #world to camera coordinate system transformation matrix converted to a pytorch tensor and moved to the GPU
+    cam_center = torch.inverse(w2c)[:3, 3] # the camera's position in the world coordinate system (i.e. location of the camera in the world space)
     w2c = w2c.unsqueeze(0).transpose(1, 2)
+    #in computer graphics it is common to transform objects from the world coordinate system to the camera's coordinate system for rendering
+    #this transformation allows the renderer to understand how objects in the scene should appear from the camera's perspective
     opengl_proj = torch.tensor([[2 * fx / w, 0.0, -(w - 2 * cx) / w, 0.0],
                                 [0.0, 2 * fy / h, -(h - 2 * cy) / h, 0.0],
                                 [0.0, 0.0, far / (far - near), -(far * near) / (far - near)],
-                                [0.0, 0.0, 1.0, 0.0]]).cuda().float().unsqueeze(0).transpose(1, 2)
+                                [0.0, 0.0, 1.0, 0.0]]).cuda().float().unsqueeze(0).transpose(1, 2) # is this the projection matrix from the 3D camera coordinate sysetm to the camera 2d image plane?
     full_proj = w2c.bmm(opengl_proj)
     cam = Camera(
         image_height=h,
@@ -508,7 +550,7 @@ def setup_camera(w, h, k, w2c, near=0.01, far=100):
         debug=True
     )
     return cam
-def plot_camera_orientations(cam_list, xyz):
+def plot_camera_orientations(cam_list, xyz): #plots camera orientations for visualisation 
     import matplotlib.pyplot as plt
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
@@ -639,6 +681,67 @@ def readMultipleViewinfos(datadir,llffhold=8):
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path)
     return scene_info
+ 
+#my addition starts here
+def readCustomDatasetInfo(path, images, eval, llffhold=8):
+    print("PATHHHH", path)
+    try:
+        #read camera extrinsics (position, orientation) and intrinsics (focal length, principal point etc.) 
+        cameras_extrinsic_file = os.path.join(path, "colmap/sparse/0", "images.bin")
+        cameras_intrinsic_file = os.path.join(path, "colmap/sparse/0", "cameras.bin")
+        cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
+        cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
+    except:
+        cameras_extrinsic_file = os.path.join(path, "colmap/sparse/0", "images.txt")
+        cameras_intrinic_file = os.path.join(path, "colmap/sparse/0", "cameras.txt")
+        cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
+        cam_intrinsics = read_intrinsics_text(cameras_intrinic_file)
+    #reading_dir = "colmap/images" if images is None else images old
+    #reading_dir = os.path.join("colmap","images") if images is None else images
+    reading_dir = os.path.join("colmap") if images is None else images
+    image_folder_path = os.path.join(path, reading_dir) #added 16:13
+
+    print("reading_dir", reading_dir)
+    # Debugging: Print the image folder path
+    print(f"Image folder path: {image_folder_path}") #added 16:13
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics= cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder =image_folder_path) #constructs CameraInfo objects (each image is associated with the corresponding camera and its parameters- intrinsics and extrinsics)
+    cam_infos = sorted(cam_infos_unsorted.copy(), key=lambda x: x.image_name) #sorts CameraInfo objects by image name to ensure that the images and their corresponding camera parameters are correctly aligned
+    #split cameras for training and testing 
+    if eval:
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+
+    else: #all cameras are used for training
+        train_cam_infos = cam_infos
+        test_cam_infos =[]
+
+    nerf_normalization = getNerfppNorm(train_cam_infos) #normalise the camera coordinates to ensure consistent input to the model (improves training convergence)
+    ply_path = os.path.join(path, "colmap/sparse/0/points3D.ply")
+    bin_path = os.path.join(path, "colmap/sparse/0/points3D.bin")
+    #txt_path = os.path.join(path, "colmap/sparse/0/points3D.txt")
+    if not os.path.exists(ply_path): #checks if the point cloud data ile exists 
+        print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
+        #try:
+        xyz, rgb, _ = read_points3D_binary(bin_path)
+        #except:
+            #xyz, rgb, _ = read_points3D_text(txt_path)
+        storePly(ply_path, xyz, rgb)
+    
+    try:
+        pcd = fetchPly(ply_path)
+    except:
+        pcd = None
+    #construct SceneInfo object containing the point cloud, camera info and normalisation parameters
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           video_cameras=train_cam_infos,
+                           maxtime=0,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path) #SceneInfo object contains the point cloud, camera infom normalisation parameters
+    return scene_info
+
+
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
@@ -646,5 +749,6 @@ sceneLoadTypeCallbacks = {
     "dynerf" : readdynerfInfo,
     "nerfies": readHyperDataInfos,  # NeRFies & HyperNeRF dataset proposed by [https://github.com/google/hypernerf/releases/tag/v0.1]
     "PanopticSports" : readPanopticSportsinfos,
-    "MultipleView": readMultipleViewinfos
+    "MultipleView": readMultipleViewinfos,
+    "CustomDataset": readCustomDatasetInfo
 }
