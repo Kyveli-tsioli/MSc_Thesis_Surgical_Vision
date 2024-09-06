@@ -15,19 +15,23 @@ import numpy as np #added that
 import os #added that
 from PIL import Image  # added this
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+#from diff_surfel_rasterization import GaussianRasterizationSettings, GaussianRasterizer #added 0107 for surface normals
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from time import time as get_time
 
 
+
+
 #render a scene from the perspective of a given viewpoint camera using the gaussian model
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, stage="fine", cam_type=None, iteration=None, viewpoint_idx=None): #added iteration argument and viewpoint_idx 11/06
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, stage="fine", cam_type=None, viewpoint_idx=None, iteration=None): #added iteration argument and viewpoint_idx 11/06
+    #add back iteratio to revert back to 11/06
     """
     Render the scene. 
     
     Background tensor (bg_color) must be on GPU!
     """
-    #pc: 3D points?
+    
 
 
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
@@ -132,6 +136,13 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             # shs = 
     else:
         colors_precomp = override_color
+     
+    #added 3006 but give me cuda error 
+    #scales_final = pc.scaling_activation(scales_final)
+    #rotations_final = pc.rotation_activation(rotations_final)
+    #opacity_final = pc.opacity_activation(opacity_final)
+    
+    
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     # time3 = get_time()
@@ -145,6 +156,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         scales = scales_final,
         rotations = rotations_final,
         cov3D_precomp = cov3D_precomp)
+    
     # time4 = get_time()
     # print("rasterization:",time4-time3)
     # breakpoint()
@@ -153,37 +165,97 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
 
     #ADDED 11/05: save depth map so that I can compare with the GT depth
-    depth_map = depth.cpu().detach().numpy()
-    depth_map_folder = "/vol/bitbucket/kt1923/4DGaussians/output/multipleview/custom_office_0_save-depth/depth_maps"
-    os.makedirs(depth_map_folder, exist_ok=True)
+    #if iteration == final_iteration:
+   ##2806 commented out starts here####
+    ##depth_map = depth #REMOVE DETACH 2806
+    ##depth_map_folder = "/vol/bitbucket/kt1923/4DGaussians/output/multipleview/office_0_2806_endo/depth_maps"
+    ##os.makedirs(depth_map_folder, exist_ok=True)
 
     # Ensure unique filenames if multiple depth maps are saved
     #depth_map_filename = f"depth_map_{iteration}.npy" was this
-    depth_map_filename = f"depth_map_{iteration}_{viewpoint_idx}.npy"
-    depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
+
+
+    ##depth_map_filename = f"depth_map_{stage}_{iteration}_{viewpoint_idx}.npy" #was this 11/06 and was generating th depth map of a particular viewpoint over the course of the training
+    #depth_map_png_filename = f"depth_map_idx_{viewpoint_camera.image_index}.png"  # Ensure this is defined
+    #depth_map_png_filename = f"depth_map_{viewpoint_idx}.png"
+    ####depth_map_filename=f"depth_map_{viewpoint_idx}.npy" # ADDED 12/06
     
-    np.save(depth_map_path, depth_map)
+    #depth_map_path = os.path.join(depth_map_folder, depth_map_png_filename) ####was depth_map_filename
+    ##depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
+    
+
+ # Temporarily disable gradient tracking for saving
+    ##with torch.no_grad():
+        ##depth_map_cpu = depth_map.cpu().numpy()
+        ##np.save(depth_map_path, depth_map_cpu)
+
+        ##depth_map_png_filename = f"depth_map_{stage}_{iteration}_{viewpoint_idx}.png"
+        ##depth_map_png_path = os.path.join(depth_map_folder, depth_map_png_filename)
+        ##depth_normalized = (depth_map_cpu - depth_map_cpu.min()) / (depth_map_cpu.max() - depth_map_cpu.min())
+        ##depth_image = (depth_normalized * 255).astype(np.uint8)
+        ##depth_image = Image.fromarray(depth_image.squeeze())
+        ##depth_image.save(depth_map_png_path)
+        ##print(f"Saved depth map .png at {depth_map_png_path}")
+####commented out ends here 2806#####
+
+    ####np.save(depth_map_path, depth_map)
+    #print(f"saved depth map .png at {depth_map_path}")
 
 
     # Convert depth map to PNG and save it- added 11/06
     #depth_map_png_filename = f"depth_map_{iteration}.png" was this 
-    depth_map_filename = f"depth_map_{iteration}_{viewpoint_idx}.png"
+    #depth_map_png_filename = f"depth_map_{iteration}_{viewpoint_idx}.png" #was this 11/06 #uncommented just now
+    #####depth_map_png_filename= f"depth_map_{stage}_{iteration}_{viewpoint_idx}.png" # ADDED 12/06
 
-    depth_map_png_path = os.path.join(depth_map_folder, depth_map_filename)
+    ####depth_map_png_path = os.path.join(depth_map_folder, depth_map_png_filename) # 11/06
+    #depth_map_png_path = os.path.join(depth_map_folder, depth_map_png_filename) #ADDED
     
-    depth_normalized = (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min())  # Normalize depth values to [0, 1]
-    depth_image = (depth_normalized * 255).astype(np.uint8)  # Scale to [0, 255] and convert to uint8
-    depth_image = Image.fromarray(depth_image.squeeze())  # Remove single-dimensional entries and convert to Image
-    depth_image.save(depth_map_png_path)  # Save as PNG
-
+    ####depth_normalized = (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min())  # Normalize depth values to [0, 1]
+    ####depth_image = (depth_normalized * 255).astype(np.uint8)  # Scale to [0, 255] and convert to uint8
+    ####depth_image = Image.fromarray(depth_image.squeeze())  # Remove single-dimensional entries and convert to Image
+    ####depth_image.save(depth_map_png_path)  # Save as PNG
+    ####print(f"Saved depth map .png at {depth_map_png_path}")
+    
     # Print depth map values
     #print("Depth map values:", depth_map)
     
+    #added this for smoothness loss on 24/06
+    ##pc.update_depths(torch.tensor(depth_normalized, dtype=torch.float, device="cuda")) 
 
-
+    #pc.update_depths(depth) commented out 3006
+    
     return {"render": rendered_image,
             "viewspace_points": screenspace_points, #2d points on the screen space
             "visibility_filter" : radii > 0,
             "radii": radii,
             "depth":depth} #depth values for the points 
 
+#added a separate function for saving 2806
+#def save_depth_map(depth_map,stage, iteration, viewpoint_idx, output_dir="/vol/bitbucket/kt1923/4DGaussians/output/multipleview/office_0_0207_torchl1_norm_smooth_diagnostics_minmaxscaling_in_smooth_0.3_tensorb_beta3.5/depth_maps"):
+def save_depth_map(depth_map,stage, iteration, viewpoint_idx, output_dir="/vol/bitbucket/kt1923/4DGaussians/output/FINAL/2508_office_0_best/depth_maps"):
+#def save_depth_map(depth_map, stage, iteration, viewpoint_idx, output_dir="/vol/bitbucket/kt1923/4DGaussians/output/multipleview/office_0_0107_endo_norm/depth_maps"): 
+    depth_map_folder = os.path.join(output_dir, "depth_maps")
+    os.makedirs(depth_map_folder, exist_ok=True)
+
+    depth_map_filename = f"depth_map_{stage}_{iteration}_{viewpoint_idx}.npy"
+    depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
+
+    # Convert depth map to numpy array without detaching
+    depth_map_cpu = depth_map.detach().cpu().numpy()
+    
+    # Save the depth map as a numpy array
+    with torch.no_grad():
+        np.save(depth_map_path, depth_map_cpu)
+
+    depth_map_png_filename = f"depth_map_{stage}_{iteration}_{viewpoint_idx}.png"
+    depth_map_png_path = os.path.join(depth_map_folder, depth_map_png_filename)
+    
+    # Convert depth map to PNG and save it
+    depth_normalized = (depth_map_cpu - depth_map_cpu.min()) / (depth_map_cpu.max() - depth_map_cpu.min())
+    depth_image = (depth_normalized * 255).astype(np.uint8)
+    depth_image = Image.fromarray(depth_image.squeeze())
+    
+    with torch.no_grad():
+        depth_image.save(depth_map_png_path)
+
+    print(f"Saved depth map .png at {depth_map_png_path}")

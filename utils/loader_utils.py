@@ -12,15 +12,22 @@ from torchvision import transforms, utils
 import random
 def get_stamp_list(dataset, timestamp):
     frame_length = int(len(dataset)/len(dataset.dataset.poses))
+    #len*(dataset): total number of frames in the dataset
+    #len(dataset.dataset.poses): number of distinct poses (i.e. camera positions) in the dataset
+    #frame_length: number of frames associated with each pose
     # print(frame_length)
+    #multiple camera poses capturing the scene from different angles
+    #multiple frames per pose: each camera captures a sequence of frames over time
     if timestamp > frame_length:
         raise IndexError("input timestamp bigger than total timestamp.")
     print("select index:",[i*frame_length+timestamp for i in range(len(dataset.dataset.poses))])
+    #makes sure to select the frames corresponding to the SAME TIMESTAMP from DIFFERENT CAMERA POSES (i.e. viewpoints) for temporal coherence
     return [dataset[i*frame_length+timestamp] for i in range(len(dataset.dataset.poses))]
+
 class FineSampler(Sampler):
     #FineSampler class for efficiently sampling viewpoints (camera positions) during the training process
     def __init__(self, dataset):
-        self.len_dataset = len(dataset) # number of frames or viewpoints in the dataset (how many captures=rames there are per unique camera pose)
+        self.len_dataset = len(dataset) # number of frames or viewpoints in the dataset (how many captures=frames there are per unique camera pose)
         self.len_pose = len(dataset.dataset.poses) #number of DISTINCT poses (camera positions) captured in the dataset
         self.frame_length = int(self.len_dataset/ self.len_pose) #average number of frames (= individual captures of the scene at different time instances or slight variations) per pose (=unique camera viewpoints or angles from which the scene is observed)
 
@@ -35,7 +42,7 @@ class FineSampler(Sampler):
                 for item in idx.tolist():
                     now_list.append(item)
                     cnt+=1
-                    if cnt % 2 == 0 and len(sample_list)>2: #reinserting prevous samples to preerve some temporal coherence?  
+                    if cnt % 2 == 0 and len(sample_list)>2: #reinserting previous samples to preserve some temporal coherence?  
                         select_element = [x for x in random.sample(sample_list,2)]
                         now_list += select_element
             

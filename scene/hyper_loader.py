@@ -32,6 +32,8 @@ class CameraInfo(NamedTuple):
     height: int
     time : float
     mask: np.array
+    pc: np.array #added 3006
+    depth: np.array #added 0107
 
 
 class Load_hyper_data(Dataset):

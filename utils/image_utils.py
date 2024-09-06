@@ -10,7 +10,7 @@
 #
 
 import torch
-
+#higher PSNR values indicate better reconstruction quality
 def mse(img1, img2):
     return (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
 @torch.no_grad()
@@ -19,12 +19,19 @@ def psnr(img1, img2, mask=None):
         img1 = img1.flatten(1)
         img2 = img2.flatten(1)
 
-        mask = mask.flatten(1).repeat(3,1)
-        mask = torch.where(mask!=0,True,False)
+        #the mask is used to selectively compute the PSNR over specific regions of the images
+        #rather than the entire image.
+
+
+        mask = mask.flatten(1).repeat(3,1) #flatten the mask to match the flatten image and repeats the mask across the colour channels
+        mask = torch.where(mask!=0,True,False) #convert the mas to boolean tensor. 'True' indicates the pixels to be considered in the PSNR calculation
         img1 = img1[mask]
         img2 = img2[mask]
         
+
+        #computes the squared difference between corresponding pixels of img1 and img2
         mse = (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
+        #reshapes the result to a 2D tensor where each row corresponds to an image in the batch
 
     else:
         mse = (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)

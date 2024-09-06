@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt #added by me June 3rd
 from pathlib import Path #added by me June 3rd 
 
 import torch
+
 import numpy as np
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
 from torch import nn
@@ -27,13 +28,16 @@ from utils.general_utils import strip_symmetric, build_scaling_rotation
 # from utils.point_utils import addpoint, combine_pointcloud, downsample_point_cloud_open3d, find_indices_in_A
 from scene.deformation import deform_network
 from scene.regulation import compute_plane_smoothness
-class GaussianModel:
+class GaussianModel():
 
     def setup_functions(self):
+        #COMPUTES THE COVARIANCE MATRIX OF EACH GAUSSIAN SPLAT FROM THE SCALING AND ROTATION MATRICES 
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
+            #scaling represents the scale of the gaussian splat along each principal axis
+            #rotation: defines the rotation of the gaussian splat
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
-            actual_covariance = L @ L.transpose(1, 2)
-            symm = strip_symmetric(actual_covariance) #ensure cov matrix is symmetric
+            actual_covariance = L @ L.transpose(1, 2) #reflects the paper: Σ= RSS.T R.T= RS(RS).T and  L = R @ L (this ensures that cov matrix is positive semi-definite and symmetric by design)
+            symm = strip_symmetric(actual_covariance) #ensure cov matrix is symmetric (to account for numerical errors)
             return symm
         
         self.scaling_activation = torch.exp
@@ -41,21 +45,23 @@ class GaussianModel:
 
         self.covariance_activation = build_covariance_from_scaling_rotation
 
-        self.opacity_activation = torch.sigmoid
-        self.inverse_opacity_activation = inverse_sigmoid
+        self.opacity_activation = torch.sigmoid #sigmoid to constrain the opacity values to (0,1]
+        self.inverse_opacity_activation = inverse_sigmoid #to transform values from the (0,1) to their original domain
 
-        self.rotation_activation = torch.nn.functional.normalize
+        self.rotation_activation = torch.nn.functional.normalize #ensures that rotation vectors are normalised because rotations are represented with quaternions
 
 
     def __init__(self, sh_degree : int, args):
-        #to INITIALISE the GaussianModel isntance with default values and set up necessary attributes
+       
+        #to INITIALISE the GaussianModel instance with default values and set up necessary attributes
         #this method is called when a new instance of the model is created 
         self.active_sh_degree = 0 #determines the level of detail used in the current model which can be adjusted during training
         #to improve the representation and detail as needed
         self.max_sh_degree = sh_degree  
         #each 3D Gaussian is characterized by the following attributes: 
         #POSITION, COLOUR defined by spherical harmonic coefficients, OPACITY, ROTATION FACTOR, SCALING FACTOR 
-        self._xyz = torch.empty(0) #holds the positions of Gaussians
+        self._xyz = torch.empty(0)#holds the positions of Gaussians
+        print("self._xyz shape initialisation", self._xyz.shape)
         # self._deformation =  torch.empty(0)
         self._deformation = deform_network(args) #network for modeling deformation over time (initialised with args)
         # self.grid = TriPlaneGrid()
@@ -64,13 +70,23 @@ class GaussianModel:
         self._scaling = torch.empty(0) #scaling factors for each gaussian
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
-        self.max_radii2D = torch.empty(0) #keep track of the max radius of 2D gaussian splat (determines the spatial extend of a gaussian splat) to decide which ones can be pruned
+        self.max_radii2D = torch.empty(0)#keep track of the max radius of 2D gaussian splat (determines the spatial extend of a gaussian splat) to decide which ones can be pruned
         self.xyz_gradient_accum = torch.empty(0) #accumulated gradients for positions
-        self.denom = torch.empty(0) #denominator for normalisation
+        
+        
+
+        self.denom = torch.empty(0)#denominator for normalisation
+        
+
         self.optimizer = None
         self.percent_dense = 0 
         self.spatial_lr_scale = 0
         self._deformation_table = torch.empty(0)
+
+        #added this for smoothness loss on 24/06
+        #self.depths= torch.empty(0) commented out 3006
+
+
         self.setup_functions()
 
     def capture(self): #to SAVE the current state of the model (enable checkpointing during training)
@@ -130,6 +146,7 @@ class GaussianModel:
         return self._xyz
 
     @property
+    #concatenates features_dc and features_rest to provide a combined feature set for each gaussian
     def get_features(self):
         features_dc = self._features_dc
         features_rest = self._features_rest
@@ -140,6 +157,18 @@ class GaussianModel:
     def get_opacity(self):
         return self.opacity_activation(self._opacity) #returns the transformed opacity values for each gaussian
     
+    #####added the following three properties for smoothness loss term on 24/06
+    @property
+    def get_depths(self):
+        return self.depths
+    
+    @property
+    def get_positions(self):
+        return self._xyz
+    
+    def update_depths(self, new_depths):
+        self.depths = new_depths.requires_grad_(True) #added the requires_grad 2806
+    #########
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
@@ -165,6 +194,7 @@ class GaussianModel:
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
 
+        #inverse sigmoid to bring them to R instead of constraining them into [0,1] so that optimiser can operate effectively and avoid vanishing gradients (when values are very close to 0 or 1)
         opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
@@ -178,6 +208,8 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self._deformation_table = torch.gt(torch.ones((self.get_xyz.shape[0]),device="cuda"),0)
+
+  
     def training_setup(self, training_args):
         #initialises various training parameters and the optimizer for the GaussianModel
         self.percent_dense = training_args.percent_dense #sets the percentage of gaussians that will be actively used in training
@@ -358,14 +390,18 @@ class GaussianModel:
         return optimizable_tensors
 
     def _prune_optimizer(self, mask):
-        #handles the removal (pruning) of certain Gaussian components
-
+        #handles the removal (pruning) of certain Gaussian components and updates the optimizer's state after pruning
+        #the function ensures that after pruning, the optimizer's state (including the moving averages used for adaptive learning rates)
+        #is consistent with the updated model parameters to ensure that adam optimizer continues functioning correctly with the pruned model
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
             if len(group["params"]) > 1:
                 continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
-            if stored_state is not None:
+            #'state' of the optimizer is internal variables and data structures maintained by the optimizer
+            #to perform updates to the model's parameters. specifically for the adam optimizer, states include:
+            #exponential moving average of gradients, exponential moving average of squared gradients, and a state ict where it stores exp_avg and exp_avg_sq for EACH parameter it is optimizing
+            if stored_state is not None: #mask= boolean tensor that indicates which gaussian components should be kept (True) anf which should be removed (False) 
                 stored_state["exp_avg"] = stored_state["exp_avg"][mask]
                 stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
 
@@ -377,12 +413,17 @@ class GaussianModel:
             else:
                 group["params"][0] = nn.Parameter(group["params"][0][mask].requires_grad_(True))
                 optimizable_tensors[group["name"]] = group["params"][0]
-        return optimizable_tensors
+        return optimizable_tensors #returns a dictionary containing the updated parameter tensors 
 
     def prune_points(self, mask):
+        #removes certain gaussian components based on a mask, which indicates which components should be pruned
+        #mask is a boolean tensor where 'True' indicates a gaussian component to be pruned
         valid_points_mask = ~mask
-        optimizable_tensors = self._prune_optimizer(valid_points_mask)
-
+        optimizable_tensors = self._prune_optimizer(valid_points_mask) #adjusts optimizer's state to discard the pruned gaussian components and returns
+        #takes the valid_points_mask and removes the parameters of the pruned gaussian components from the optimizer's state
+        #a dictionary of the remaining(unpruned) tensors that can be optimized
+        #optimizable_tensors is a dictionary containing the update parameters for the components that are kept
+        #update model parameters to reflect pruning using the pruned tensors returned by prune_optimizer
         self._xyz = optimizable_tensors["xyz"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
@@ -396,7 +437,9 @@ class GaussianModel:
         self.max_radii2D = self.max_radii2D[valid_points_mask]
 
     def cat_tensors_to_optimizer(self, tensors_dict):
-        optimizable_tensors = {}
+        #the opposite of the prune_optimizer which removes specific parameters from the optimizer's state
+        #this function here adds new parameters to the optimizer's state
+        optimizable_tensors = {} #dict will store the new parameters that are to be added to the optimizer
         for group in self.optimizer.param_groups:
             if len(group["params"])>1:continue
             assert len(group["params"]) == 1
@@ -419,6 +462,7 @@ class GaussianModel:
         return optimizable_tensors
 
     def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_deformation_table):
+        #updates the model’s parameters to include the new gaussians
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
@@ -444,17 +488,30 @@ class GaussianModel:
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
+        #aims to increase the resolution and detail of the gaussian representation by adding more gaussians
+        #this function refines the gaussian representation by splitting high-gradient gaussians into multiple new gaussians
+        
+
+        #steps: gradient condition check, scaling condition check. generation of new gaussians (replication of scaling values, generation of new sample positions, application of rotation for correct orientation of gaussians and scaling down of the new gaussians), updates the model through calling ensification_postfix, prunes the original gaussians
         n_init_points = self.get_xyz.shape[0]
         # Extract points that satisfy the gradient condition
         padded_grad = torch.zeros((n_init_points), device="cuda")
         padded_grad[:grads.shape[0]] = grads.squeeze()
+        #selects gaussians where the gradient magnitude is greater than or equal to the gradient threshold. this ientifies gaussians that are contributing significantly to the error and need refinement
         selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
-
+        #identifies the critical gaussians that need to be refined by splitting based on the magnitude of the gradient (areas that meet the gradient threshold indicate areas needing refinement)
         # breakpoint()
+        #this line REFINES THE SELECTION (2nd condition) by ensuring that the selected gaussians also have scaling factors larger than a specifid threshold, the specified threshold
+        #indicates that these gaussians are too broad and need to be split into smaller gaussians to capture finer details
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
-        if not selected_pts_mask.any():
+        if not selected_pts_mask.any(): #if no points meet the gradient threshold exit the function early as there is nothing to densify
             return
+        #if such gaussians exist, it prepares to split each selected gaussian into multiple new gaussians. this involves:
+        #replicating the scaling values of the selected gaussians
+        #generating new sample positions for the new gaussians based on these scaling values
+        #adjust the new positions by applying the rotations to ensure the gaussians are correctly oriented
+        #it scales down the new gaussians appropriately to maintain the correct level of detail
         stds = self.get_scaling[selected_pts_mask].repeat(N,1)
         means =torch.zeros((stds.size(0), 3),device="cuda")
         samples = torch.normal(mean=means, std=stds)
@@ -469,9 +526,11 @@ class GaussianModel:
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_deformation_table)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
-        self.prune_points(prune_filter)
+        self.prune_points(prune_filter) #prune original gaussians
 
     def densify_and_clone(self, grads, grad_threshold, scene_extent, density_threshold=20, displacement_scale=20, model_path=None, iteration=None, stage=None):
+        #creates a mask that selects gaussians where the norm of their gradients is greater than or equal to a specified threshold
+        #steps: gradient condition check, density condition check, cloning of gaussians, update of the model through densiication_postfix
         grads_accum_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         
         # 主动增加稀疏点云
@@ -497,6 +556,8 @@ class GaussianModel:
         # Extract points that satisfy the gradient condition
         selected_pts_mask = torch.logical_and(grads_accum_mask,
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+        ##the exact opposite condition than in the densify_and_split function
+        #clones gaussians in regiions where the scaling factor is small so that we can increase the density in areas that need more detail 
         # breakpoint()        
         new_xyz = self._xyz[selected_pts_mask] 
         # - 0.001 * self._xyz.grad[selected_pts_mask]
@@ -525,8 +586,11 @@ class GaussianModel:
     
 
     def get_displayment(self,selected_point, point, perturb):#generates new positions for selected point by adding random displacements ensuring they stay within the axis-aligned bounding boxes
-        xyz_max, xyz_min = self.get_aabb
+        xyz_max, xyz_min = self.get_aabb #retrieves the max and min bounds of the aabb for the object providing constraints within which new gaussians can be placed
+        #generate random displacements using a norma; distribution
         displacements = torch.randn(selected_point.shape[0], 3).to(selected_point) * perturb #generate random displacemetns for each selected point
+        #adds displacements to selected points to create new positions for the gaussians
+        #randomness helps in exploring different spatial configurations 
         final_point = selected_point + displacements #adds the random disp;acements to the selected points to get the new positions 
 
         #ensure the new positions stay within the AABB
@@ -583,7 +647,9 @@ class GaussianModel:
         downsampled_point_mask = torch.zeros((point_cloud.shape[0]), dtype=torch.bool).to(point_downsample.device)
         downsampled_point_mask[downsampled_point_index]=True
         return downsampled_point_mask
+    
     def grow(self, density_threshold=20, displacement_scale=20, model_path=None, iteration=None, stage=None):
+        #function that aims to increase the density of the Gaussian model by adding new points, particularly in low-density areas
         if not hasattr(self,"voxel_size"):
             self.voxel_size = 8  
         if not hasattr(self,"density_threshold"):
@@ -591,10 +657,12 @@ class GaussianModel:
         if not hasattr(self,"displacement_scale"):
             self.displacement_scale = displacement_scale
         flag = False
-        point_cloud = self.get_xyz.detach().cpu()
-        point_downsample = point_cloud.detach()
-        downsampled_point_index = self.downsample_point(point_downsample)
 
+        #retrieve the current positions of the gaussians
+        point_cloud = self.get_xyz.detach().cpu()
+        point_downsample = point_cloud.detach() 
+        downsampled_point_index = self.downsample_point(point_downsample)
+        #identify points in low-density areas, newly generated points to increase density and indices of low-density points in the original point cloud
 
         _, low_density_points, new_points, low_density_index = addpoint(point_cloud[downsampled_point_index],density_threshold=self.density_threshold,displacement_scale=self.displacement_scale,iter_pass=0)
         if new_points.shape[0] < 100 :
@@ -618,21 +686,25 @@ class GaussianModel:
             o3d.io.write_point_cloud(os.path.join(write_path,f"iteration_{stage}{iteration}.ply"),point)
         return
     def prune(self, max_grad, min_opacity, extent, max_screen_size):
+        #opacity-based pruning: creates a mask identifying gaussians with opacity values below a specified threshold
+        #these gaussians contribute little to the overall image and can be removed
         prune_mask = (self.get_opacity < min_opacity).squeeze()
 
-        if max_screen_size:
-            big_points_vs = self.max_radii2D > max_screen_size
-            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+        if max_screen_size: #if max_screen_size is provided, the function identifies gaussians that are too large to be efficiently rendered
+            big_points_vs = self.max_radii2D > max_screen_size #checks if the 2D projected size of the gaussian excees max_screen_size
+            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent #checks if the scaling factor (i.e. size of the gaussian in 3D space) exceeds a 10% fraction of the scene extent
             prune_mask = torch.logical_or(prune_mask, big_points_vs)
 
-            prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
+            prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws) #gaussians that meet either of these conditions are marked for pruning
         self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()
     def densify(self, max_grad, min_opacity, extent, max_screen_size, density_threshold, displacement_scale, model_path=None, iteration=None, stage=None):
+        #calculates the view-space positional gradients and normalises them
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
-
+        #calls the densify_and_clone or ensify_and_split 
+        #the scaling condition to check if the gaussians are too large (i.e. large scaling factor) is implemented in the densify_and_split
         self.densify_and_clone(grads, max_grad, extent, density_threshold, displacement_scale, model_path, iteration, stage)
         self.densify_and_split(grads, max_grad, extent)
     def standard_constaint(self):
@@ -650,6 +722,7 @@ class GaussianModel:
 
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
+        #updates the gradient accumulation and denominator for normalisation during densification
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
     @torch.no_grad()

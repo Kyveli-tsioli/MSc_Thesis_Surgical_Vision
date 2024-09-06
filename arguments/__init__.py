@@ -111,12 +111,12 @@ class OptimizationParams(ParamGroup):
         self.dataloader=False
         self.zerostamp_init=False
         self.custom_sampler=None
-        self.iterations = 30_000
-        self.coarse_iterations = 3000
+        self.iterations = 30000 #60_000 #default was 30_000
+        self.coarse_iterations = 30000 #30000 #3000 default
         self.position_lr_init = 0.00016
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01
-        self.position_lr_max_steps = 20_000
+        self.position_lr_max_steps = 30_000 #default was 20_000
         self.deformation_lr_init = 0.00016
         self.deformation_lr_final = 0.000016
         self.deformation_lr_delay_mult = 0.01
@@ -128,7 +128,7 @@ class OptimizationParams(ParamGroup):
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
         self.percent_dense = 0.01
-        self.lambda_dssim = 0
+        self.lambda_dssim = 0.2 #0.2 #default is 0 #tried 0.05 and it works
         self.lambda_lpips = 0
         self.weight_constraint_init= 1
         self.weight_constraint_after = 0.2
@@ -147,6 +147,8 @@ class OptimizationParams(ParamGroup):
         self.opacity_threshold_fine_after = 0.005
         self.batch_size=1
         self.add_point=False
+        self.lambda_smoothness = 0.5  # Added this for smoothness loss - 24/06
+
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

@@ -14,11 +14,50 @@ import math
 import numpy as np
 from typing import NamedTuple
 
-class BasicPointCloud(NamedTuple):
-    points : np.array
-    colors : np.array
-    normals : np.array
+#class BasicPointCloud(NamedTuple):
+    #original is the below#
+    #points : np.array
+    #colors : np.array
+    #normals : np.array
 
+    ###my trial on 1607###
+
+
+#I adjusted this method to make it work for brain phantom. The original class 'BasicPointCloud' is defined using 'NamedTuple', which does
+#not support the addition of methods directly, and this is why we switch to a regular class definition.
+
+
+
+class BasicPointCloud:
+    def __init__(self, points, colors, normals):
+        #Intialises the points, colours, and normals as private instance variables (preceded by an underscore)
+        self._points = np.array(points)
+        self._colors = np.array(colors)
+        self._normals = np.array(normals)
+
+    @property
+    def points(self):
+        return self._points
+
+    @property
+    def colors(self):
+        return self._colors
+
+    @property
+    def normals(self):
+        return self._normals
+
+    def is_empty(self):
+        #checks if the point cloud is empty by checking the size of the 'points' array.
+        #this will help in verifying the state of the point cloud before attempting to ue it in operations 
+        #that assume it has data.
+        return self._points.size == 0
+
+    def __repr__(self):
+        #provides a neat string representation of the object, useful for debugging and logging.
+        return f"BasicPointCloud(points={self._points}, colors={self._colors}, normals={self._normals})"
+
+###end of my trial 
 def geom_transform_points(points, transf_matrix):
     P, _ = points.shape
     ones = torch.ones(P, 1, dtype=points.dtype, device=points.device)

@@ -12,11 +12,11 @@ def render_training_image(scene, gaussians, viewpoints, render_func, pipe, backg
     #render_training_image function responsible for rendering images from a set of viewpoints during training
     #and saves them to disk along with the corresponding ground truth and depth images
     #it also saves the point cloud at each iteration if needed 
-    def render(gaussians, viewpoint, path, scaling, cam_type):
+    def render(gaussians, viewpoint, path, scaling, cam_type): #0607 added idx
         #this nested function handles the rendering process for each viewpoint
         # scaling_copy = gaussians._scaling
         render_pkg = render_func(viewpoint, gaussians, pipe, background, stage=stage, cam_type=cam_type)
-        label1 = f"stage:{stage},iter:{iteration}"
+        label1 = f"stage:{stage},iter:{iteration}" #0608 added the view argument
         times =  time_now/60
         if times < 1:
             end = "min"
@@ -58,7 +58,10 @@ def render_training_image(scene, gaussians, viewpoints, render_func, pipe, backg
     #the base paths for saving the rendered images and point clouds are constructed here
     #here the "coarsetest_render" and "coarsetrain_render" folders are being created most likely
     render_base_path = os.path.join(scene.model_path, f"{stage}_render")
+    print('render_base_path', render_base_path)
+    print("EDW KOITAS 1650 for scene model path", scene.model_path)
     point_cloud_path = os.path.join(render_base_path,"pointclouds")
+
     image_path = os.path.join(render_base_path,"images")
     if not os.path.exists(os.path.join(scene.model_path, f"{stage}_render")):
         os.makedirs(render_base_path)
@@ -70,8 +73,9 @@ def render_training_image(scene, gaussians, viewpoints, render_func, pipe, backg
     
     # point_save_path = os.path.join(point_cloud_path,f"{iteration}.jpg")
     #iterate through each viewpoint and call the nested 'render' function to save the rendered images
-    for idx in range(len(viewpoints)):
-        image_save_path = os.path.join(image_path,f"{iteration}_{idx}.jpg")
+    for idx in range(len(viewpoints)): #DEFAULT 
+    #for viewpoint in range(len(viewpoints)): #0608 MODIFICATION
+        image_save_path = os.path.join(image_path,f"{iteration}.jpg")
         render(gaussians,viewpoints[idx],image_save_path,scaling = 1,cam_type=dataset_type)
     # render(gaussians,point_save_path,scaling = 0.1)
     # 保存带有标签的图像

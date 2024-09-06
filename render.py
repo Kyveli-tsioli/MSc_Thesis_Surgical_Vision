@@ -47,6 +47,7 @@ to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8) #converts 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background, cam_type): #performs rendering for a given set of views using GS 
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders") #rendered images
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt") #ground truth images saved to disk
+    gtdepth_path= os.path.join(model_path, name, "ours_{}".format(iteration), "gt_depth") #added 2806
     opacity_path = os.path.join(model_path, name, "ours_{}".format(iteration), "opacity") # path to save opacity maps #added 
 
     makedirs(render_path, exist_ok=True)
