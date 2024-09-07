@@ -71,35 +71,8 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True): #measure
         return ssim_map.mean(1).mean(1).mean(1)
 
 
-#ADDED 2707
-def masked_l1_loss(output, target, mask):
-    # Assumes mask is binary (0 or 1), same shape as output and target
-    diff = output - target
-    masked_diff = diff * mask  # Apply mask
-    return torch.abs(masked_diff).mean()  # Compute mean L1 loss only on masked elements
- 
 
-#def l1_loss_mask(network_output, gt, mask=None):
-    #nan_mask = ~torch.isnan(network_output)
-    #valid = nan_mask & (network_output != float('inf')) & (network_output != float('-inf'))
-    
-   # if mask is not None:
-        # Add a channel dimension if it's missing (assuming mask is [N, H, W])
-        #if mask.dim() == 3:
-            #mask = mask.unsqueeze(1)
-        # Expand mask to match network_output's channels if necessary
-       # if mask.size(1) != network_output.size(1):
-           # mask = mask.expand(-1, network_output.size(1), -1, -1)
-    
-    #combined_mask = valid if mask is None else (valid & mask)
-    
-    #if combined_mask.any():
-        #return (torch.abs(network_output[combined_mask] - gt[combined_mask])).mean()
-   # else:
-        #return torch.tensor(0.0, device=network_output.device)
 
-    
-#2806 loss from endo-4dgs
 def l1_loss_depth(network_output, gt):
     #nan_mask = ~torch.isnan(network_output)  # Create a mask to ignore NaN values
     #return torch.abs(network_output[nan_mask] - gt[nan_mask]).mean()
@@ -119,23 +92,21 @@ def l1_loss_mask(network_output, gt, mask=None):
 
 
     
-##trial 2706
+
 def find_neighbors_and_smooth_splats(positions, depths,k=10):
 
-#extract 3D positions and depths
+    #extract 3D positions and depths
     #remove detach
     positions_np= positions.detach().cpu().numpy() #tensor containing the 3D coordinates of each gaussian splat get detached from the comp graph, then moved to cpu then converted to numpy array
     print("positions", positions_np)
     print("positions shape", positions_np.shape) #(120517,3) i.e. (n,3) where n=120517 is the number of gaussian splats. is that normal? paper says at optimised state 1-5 million splats for all scenes tested
     #each row in positions_np represents the 3D coordinates of a single gaussian splat
-    #28/06 this changed to positions shape: (84031,3)
+    #positions shape: (84031,3)
     print("positions type", type(positions_np))
 
 
     # Flatten the depths to match the splat positions
     depths_flat = depths.view(-1).detach().cpu().numpy() #flatten the depth tensor into a 1D tensor
-    #depths_np= depths.detach().cpu().numpy()
-    print("depths flat", depths_flat)
     print("depths shape", depths_flat.shape) #(3072000,)
     
     #create KD-tree for finding nearest neighbors 
@@ -170,7 +141,7 @@ def find_neighbors_and_smooth_splats(positions, depths,k=10):
 
 
 
-#trial for depth smoothness loss - 24/06
+
 def depth_smoothness_splats(gaussians, radius=1):
     #gaussians: gaussian object (initialised in the scene>init.py)
     #radius: radius within which to enforce depth smoothness
@@ -206,9 +177,10 @@ def depth_smoothness_splats(gaussians, radius=1):
 
     return smoothness_loss / count if count > 0 else smoothness_loss
 
-     #normalisation: averaging the smoothness loss by the count of neighbor pairs
-#ensures that the loss is not dependent on the number of neighbors. this makes the loss value consistent regardless of the density of the splats 
-#also avoid the scenario where the smoothness loss grows large if there are many neighbors, making the overall loss (the rest of the losses) unstable
+    #comment on normalisation step:
+    #normalisation: averaging the smoothness loss by the count of neighbor pairs
+    #ensures that the loss is not dependent on the number of neighbors. this makes the loss value consistent regardless of the density of the splats 
+    #also avoid the scenario where the smoothness loss grows large if there are many neighbors, making the overall loss (the rest of the losses) unstable
 
 def depth_smoothness_splats_vector(gaussians, radius=1):
     # Get positions and depths of Gaussians
@@ -274,143 +246,6 @@ def depth_smoothness_splats_KD(gaussians, radius=1.0):
 
 
 
-def depth_smoothness_splats_aft(gaussians, radius=5.0):
-    depths = gaussians.get_depths.squeeze(0)
-    positions = gaussians.get_xyz
-
-    print("depths after squeezing", depths.shape)
-    print("positions shape", positions.shape)
-
-    smoothness_loss = 0.0
-    count = 0
-
-    # Use a simple distance check instead of KDTree for simplicity
-    for i in range(len(positions)):
-        pos_i = positions[i]
-        neighbors = []
-        for j in range(len(positions)):
-            if i != j:
-                pos_j = positions[j]
-                if torch.norm(pos_i - pos_j) < radius:
-                    neighbors.append(j)
-
-        pos_i = pos_i.long()
-        for neighbor in neighbors:
-            pos_neighbor = positions[neighbor].long()
-            if (0 <= pos_i[0] < depths.shape[1] and 0 <= pos_i[1] < depths.shape[0] and
-                0 <= pos_neighbor[0] < depths.shape[1] and 0 <= pos_neighbor[1] < depths.shape[0]):
-                smoothness_loss += torch.abs(depths[pos_i[1], pos_i[0]] - depths[pos_neighbor[1], pos_neighbor[0]])
-                count += 1
-
-    return smoothness_loss / count if count > 0 else smoothness_loss
-
-
-def depth_smoothness_splats_KD_project(gaussians, radius=1.0):
-    # Get positions and depths of Gaussians
-    positions_3d = gaussians.get_xyz.detach().cpu().numpy()  # [num_splats, 3]
-    depths = gaussians.get_depths.squeeze(0).detach().cpu().numpy()  # [height, width]
-    
-    # Debug prints to check shapes and contents
-    print("positions_3d shape:", positions_3d.shape)
-    print("depths shape:", depths.shape)
-    print("depths:", depths)
-    
-    depths_flat = depths.flatten()  # Flatten the depth map to a 1D array
-
-    # More debug prints
-    print("depths_flat shape:", depths_flat.shape)
-    print("depths_flat:", depths_flat)
-    
-    if depths_flat.size == 0:
-        raise ValueError("depths_flat is empty. Check the source of depth values.")
-
-    # Project 3D positions to 2D image space
-    positions_2d = project_3d_to_2d(positions_3d)
-    
-    # More debug prints
-    print("positions_2d shape:", positions_2d.shape)
-    print("positions_2d:", positions_2d)
-
-    # Use KD-Tree for efficient neighbor search in 2D space
-    kdtree = KDTree(positions_2d)
-    
-    smoothness_loss = 0.0
-    count = 0
-
-    # Iterate over each Gaussian splat
-    for i in range(len(positions_2d)):
-        depth_i = depths_flat[i]  # Get depth using flattened index
-
-        # Find neighbors within the specified radius in 2D space
-        neighbors = kdtree.query_radius([positions_2d[i]], r=radius)[0]
-        print("mpike 1")
-        
-        for j in neighbors:
-            if i != j:
-                depth_j = depths_flat[j]  # Get depth of the neighboring Gaussian splat
-                smoothness_loss += abs(depth_i - depth_j)  # Add absolute difference in depths
-                print("mpike 2")
-                count += 1
-
-    return smoothness_loss / count if count > 0 else smoothness_loss  # Average the smoothness loss
-
-def project_3d_to_2d(positions_3d):
-    """
-    Project 3D positions to 2D image space. This function should be updated based on your actual camera model.
-    """
-    # Example transformation (assuming a simple orthogonal projection for demonstration purposes)
-    # In practice, you should replace this with the actual projection logic from your camera model.
-    positions_2d = positions_3d[:, :2]  # Use the first two coordinates for a simple projection
-
-    return positions_2d
-
-
-
-def depth_smoothness_splats_KD_old(gaussians, radius=5.0):
-    depths = gaussians.get_depths.squeeze(0) # Remove batch dimension if present
-    print("depths after squeezing", depths.shape)
-
-    positions = gaussians.get_xyz
-    print("positions shape", positions.shape)
-
-    # Normalize positions to the range of the depth map dimensions
-    # This step assumes that positions are within a known range.
-    # You need to adjust this normalization according to your actual range and depth map resolution.
-    min_pos = positions.min(dim=0)[0]
-    max_pos = positions.max(dim=0)[0]
-    normalized_positions = (positions - min_pos) / (max_pos - min_pos)
-    normalized_positions *= torch.tensor([depths.shape[1], depths.shape[0], 1], device=positions.device)  # Adjust to depth map dimensions
-
-    # Build KD-tree for efficient neighbor search
-    kdtree = KDTree(normalized_positions[:, :2].detach().cpu().numpy())  # Only use x, y for 2D grid mapping
-
-    smoothness_loss = 0.0
-    count = 0
-
-    for i in range(len(positions)):
-        print("mpike 1")
-        # Find neighbors within the specified radius
-        idxs = kdtree.query_radius(normalized_positions[i:i+1, :2].detach().cpu().numpy(), r=radius)[0]
-        if len(idxs) > 1:
-            print("mpike 2")
-            # Check if indices are within bounds
-            y_idx = int(normalized_positions[i, 1])
-            x_idx = int(normalized_positions[i, 0])
-            print(f"Indices: y_idx={y_idx}, x_idx={x_idx}")
-            if y_idx < depths.shape[0] and x_idx < depths.shape[1]:
-                i_depth = depths[y_idx, x_idx]
-                for j in idxs:
-                    if i != j:
-                        j_y_idx = int(normalized_positions[j, 1])
-                        j_x_idx = int(normalized_positions[j, 0])
-                        if j_y_idx < depths.shape[0] and j_x_idx < depths.shape[1]:
-                            j_depth = depths[j_y_idx, j_x_idx]
-                            smoothness_loss += torch.abs(i_depth - j_depth)
-                            print("smoothness_loss EDW KOITAS", smoothness_loss)
-                            count += 1
-
-    return smoothness_loss / count if count > 0 else smoothness_loss  # Normalize the loss
-
 def edge_aware_smoothness_loss(gaussians, rgb):
     depth= gaussians.get_depths
     # Add a dummy dimension to depth to match the shape of rgb for debugging on nan- 24/06 afternoon
@@ -420,24 +255,12 @@ def edge_aware_smoothness_loss(gaussians, rgb):
     #im comparing the rendered image (gaussians) and the training image (rgb)
     #so the shapes should be rendered image: [batch, H, W, 3]
     #rgb: [batch, H, W, 3]
-    #grad_depth_x= torch.abs(depth[...,:,:-1,:] - depth[..., :, 1:,:])
-    #grad_depth_y= torch.abs(depth[...,:-1,:,:] - depth[..., 1:, :, :])
+   
     grad_depth_x = torch.abs(depth[..., :, :-1] - depth[..., :, 1:])
     grad_depth_y = torch.abs(depth[..., :-1, :] - depth[..., 1:, :])        
 
     grad_img_x= torch.mean(torch.abs(rgb[..., :, :-1, :]- rgb[..., :, 1:, :]), dim=1, keepdim=True)
     grad_img_y= torch.mean(torch.abs(rgb[..., :-1, :, :] - rgb[..., 1:, :, :]), dim=1, keepdim=True)
-
-    #added for debugging the nans in the smoothness loss function
-    print("grad_depth_x:", grad_depth_x)
-    #added for debugging 25/06 morning
-    print("grad_depth_x shape iter 2999", grad_depth_x.shape)
-    print("grad_depth_y shape iter 2999", grad_depth_y.shape)
-    print("grad_img_x shape iter 2999", grad_img_x.shape)
-    print("grad_img_y shape iter 2999", grad_img_y.shape)
-    print("grad_depth_y:", grad_depth_y)
-    print("grad_img_x:", grad_img_x)
-    print("grad_img_y:", grad_img_y)
 
 
     # Adjust the shapes to make sure they match

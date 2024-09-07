@@ -55,9 +55,8 @@ class CameraInfo(NamedTuple): #holds info about the camera (rotation,translation
     height: int
     time : float
     mask: np.array
-    #COMMENTED OUT 0207
-    depth: np.array  #= None #added 2806
-    pc= np.array #added 2806
+    depth: np.array 
+    pc= np.array 
 
    
 class SceneInfo(NamedTuple): #holds info about the entire scene including point clouds, train/test/video cameras, normalisation params and path to the ply file
@@ -138,35 +137,23 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depth_folde
 
 
 
-        #added 2806
-        # Load depth map
-        ##depth_path= os.path.join(depth_folder, f"depth_{idx}.npy")
-        ##depth_path_png = os.path.join(depth_folder, f"depth_{idx}.png") #added 2806
+
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
         image = PILtoTorch(image,None)
-         # Load depth map
-        #depth_path_npy = os.path.join(depth_folder, f"{idx}.npy") commented out 3007
-        #depth_path_png = os.path.join(depth_folder, f"{idx}.png") #added 2806   commented out 3007
-        #print("DEPTH PATH PNG".capitalize, depth_path_png) commented out 3007
-        #####adjusted 2807###
-         # Initialize depth to zeros in case no valid depth file is found
-        #depth = None  # Start with None to explicitly catch unassigned cases
-   
-        #depth_folder = '/vol/bitbucket/kt1923/4DGaussians/data/multipleview/office_0/colmap/gt/depth' #for office_0
-        #depth_folder = '/vol/bitbucket/kt1923/4DGaussians/data/multipleview/ns_images2/colmap/gt/normalized_depth'
-        #depth_folder = '/vol/bitbucket/kt1923/4DGaussians/data/multipleview/office_0/colmap/gt/normalized_depth'
-        depth_folder = '/vol/bitbucket/kt1923/4DGaussians/data/multipleview/ns_images2/colmap/gt/depth'
+    
+    
+        #depth_folder = '/vol/bitbucket/kt1923/4DGaussians/data/multipleview/office_0/colmap/gt/depth' #for office_0 (i.e. Facebook Replica) dataset
+        depth_folder = '/vol/bitbucket/kt1923/4DGaussians/data/multipleview/ns_images2/colmap/gt/depth' #for brain phantom
         print("Listing files in directory:", depth_folder)
-        #print(os.listdir(depth_folder))
+        
 
-        #depth_path_png = os.path.join(depth_folder, f"depth_{idx}.png") #for office_0
-        depth_path_png = os.path.join(depth_folder, f"{idx}.png") #for brain phantom
+        #depth_path_png = os.path.join(depth_folder, f"depth_{idx}.png") #for office_0 dataset
+        depth_path_png = os.path.join(depth_folder, f"{idx}.png") #for brain phantom dataset
         print("Depth path PNG:", depth_path_png)
         if os.path.exists(depth_path_png):
-            #depth_raw = cv2.imread(depth_path_png, cv2.IMREAD_UNCHANGED)  # Read the image unchanged
             depth_raw = cv2.imread(depth_path_png, cv2.IMREAD_ANYDEPTH) 
-            print("mpike sto depth_raw")
+            print("enters depth_raw")
             if depth_raw is not None:
                 depth = depth_raw.astype(np.float32)  # Convert type after confirming it's loaded
                 print(f"Loaded depth image with shape {depth.shape} and dtype {depth.dtype}")
@@ -179,26 +166,9 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, depth_folde
         else:
             print(f"Depth file does not exist: {depth_path_png}")
 
-            #if depth_raw is None:
-                #depth = np.zeros((height, width), dtype=np.float32)  # Fallback to zeros if none loaded
-                #print("Defaulting to zero-filled depth array due to loading issues.")
-
-        ### end of adjustment 2807###
-
-        ######BRING IT BACK TO THE ORIGINAL BELOW### 2807
-        # SOS EDW EINAI TO THEMA, TA KANEI 0##
-        #if os.path.exists(depth_path_npy):
-            #depth = np.load(depth_path_npy)
-       # elif os.path.exists(depth_path_png):
-            #depth = np.array(Image.open(depth_path_png))
-        #else:
-            #print("mpike na ta kanei 0s")
-            #depth = np.zeros((height, width))  
 
     
         # Load depth map
-        ##depth_path = os.path.join(images_folder, f"depth_{idx}.png") #added 2806
-        ##depth = np.load(depth_path) #added 2806
         #each camera is associated with its corresponding image and intrinsic parameters
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
                               image_path=image_path, image_name=image_name, width=width, height=height,
@@ -214,8 +184,6 @@ def fetchPly(path): #reads point cloud data from a PLY file
         positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
         colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
     
-
-        ###added 1607 for debugging
          # Check for normals
         if 'nx' in vertices:
             
@@ -224,7 +192,7 @@ def fetchPly(path): #reads point cloud data from a PLY file
         else:
            
             normals = np.zeros_like(positions)  # handle missing normals
-        ### end of addition
+        
         normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T #this shows that there is an expectation for the PLY
         #file to contain normal data ('nx', 'ny', 'nz') for the normal vectors at each point and this was not present in the original initial .PLY file.
         #this is why we added the if 'nx' in vertices statement in the fetchPLY and this is why we passed the initial PLY
@@ -252,7 +220,7 @@ def storePly(path, xyz, rgb): #writes point cloud data to a PLY file
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-#ADDED 2807
+
 def read_depth_maps(depth_folder):
     depth_maps = []
     for filename in os.listdir(depth_folder):
@@ -264,7 +232,7 @@ def read_depth_maps(depth_folder):
             else:
                 print(f"Failed to load depth image from {filepath}")
     return depth_maps
-###
+
 def readColmapSceneInfo(path, images, eval, llffhold=8):
     #reads COLMAP scene info, including camera parameters and point cloud data
     try:
@@ -277,23 +245,21 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
-    #added now
+    
     reading_dir = os.path.join(path, "images") if images is None else images
     print("READING DIR IS", reading_dir)
-    #reading_dir_gt_depth = os.path.join(path, "gt/normalized_depth") #was this up until 2707
-    #reading_dir_gt_depth = os.path.join(path, "gt/visualized_depth")
-    reading_dir_gt_depth = os.path.join(path, "gt/depth") #ADJUSTMENT 2707
+    reading_dir_gt_depth = os.path.join(path, "gt/depth") 
     print("READING DIR GT DEPTH", reading_dir_gt_depth)
-    #reading_dir = "images" if images == None else images
-    depth_maps = read_depth_maps(reading_dir_gt_depth) #ADDED 2807
-    depth_maps = read_depth_maps(reading_dir_gt_depth) #added 2807
-    for depth_map in depth_maps: #added 2807
-        print(f"Depth map stats: Min={np.min(depth_map)}, Max={np.max(depth_map)}") #added 2807
+
+    depth_maps = read_depth_maps(reading_dir_gt_depth) 
+    depth_maps = read_depth_maps(reading_dir_gt_depth) 
+    for depth_map in depth_maps:
+        print(f"Depth map stats: Min={np.min(depth_map)}, Max={np.max(depth_map)}") 
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir), depth_folder= reading_dir_gt_depth)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name) #ordering helps avoid mismatches between images and their corresponding camera parameters
     # breakpoint()
 
-    #depth_maps = read_depth_maps(reading_dir_gt_depth ) #ADDED 2807
+
     if eval:
         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
         test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
@@ -304,27 +270,12 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
     nerf_normalization = getNerfppNorm(train_cam_infos) #transform the camera coordinates to a normalized step to ensure the input to the model is in a consistent range for stabilising and improving convegence (check NeRF paper)
 
     ply_path = os.path.join(path, "sparse/0/points3D.ply")
-    #print("EDW KOITAS 1607 KYVE", ply_path)
-    bin_path = os.path.join(path, "sparse/0/points3D.bin")
-    #print("BIN PATH KYVE", bin_path)
-    txt_path = os.path.join(path, "sparse/0/points3D.txt")   
-    #below is the original#   
-    #if not os.path.exists(ply_path):
 
-        #print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
-        #try:
-            #xyz, rgb, _ = read_points3D_binary(bin_path)
-        #except:
-            #xyz, rgb, _ = read_points3D_text(txt_path)
-        #storePly(ply_path, xyz, rgb)
+    bin_path = os.path.join(path, "sparse/0/points3D.bin")
+
+    txt_path = os.path.join(path, "sparse/0/points3D.txt")   
     
-    #try:
-        #pcd = fetchPly(ply_path)  
-        
-    #except:
-        #pcd = None
     
-    #HERE IS MY TRIAL 1607#
     print("Checking PLY path:", ply_path, os.path.exists(ply_path))
     print("Checking BIN path:", bin_path, os.path.exists(bin_path))
     print("Checking TXT path:", txt_path, os.path.exists(txt_path))
@@ -794,11 +745,9 @@ def readMultipleViewinfos(datadir,llffhold=8):
     train_cam_infos_ = format_infos(train_cam_infos,"train")
     nerf_normalization = getNerfppNorm(train_cam_infos_)
 
-    ##ply_path = os.path.join(datadir, "points3D_multipleview.ply")
+    
     ply_path = os.path.join(datadir, "points3D.ply")
-    #bin_path = os.path.join(datadir, "points3D_multipleview.bin") #original
-    bin_path= os.path.join(datadir,"points3D.bin") #my attempt
-    print("EDW TO BIN_PATH", bin_path)
+    bin_path= os.path.join(datadir,"points3D.bin")
     txt_path = os.path.join(datadir, "points3D_multipleview.txt")
     if not os.path.exists(ply_path):
         print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
@@ -825,7 +774,7 @@ def readMultipleViewinfos(datadir,llffhold=8):
  
 #my addition starts here
 def readCustomDatasetInfo(path, images, eval, llffhold=8):
-    print("PATHHHH", path)
+    print("path", path)
     try:
         #read camera extrinsics (position, orientation) and intrinsics (focal length, principal point etc.) 
         cameras_extrinsic_file = os.path.join(path, "colmap/sparse/0", "images.bin")
@@ -837,16 +786,15 @@ def readCustomDatasetInfo(path, images, eval, llffhold=8):
         cameras_intrinic_file = os.path.join(path, "colmap/sparse/0", "cameras.txt")
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinic_file)
-    #reading_dir = "colmap/images" if images is None else images old
-    #reading_dir = os.path.join("colmap","images") if images is None else images
+
     reading_dir = os.path.join("colmap") if images is None else images
-    image_folder_path = os.path.join(path, reading_dir) #added 16:13
-    #depth_folder_path = os.path.join(path, "colmap/gt/normalized_depth")  # added 2806
-    depth_folder_path = os.path.join(path, "colmap/gt/depth") #2707 ADJUSTMENT alla den kalw auti tin sinartisi outws i allws
+    image_folder_path = os.path.join(path, reading_dir) 
+
+    depth_folder_path = os.path.join(path, "colmap/gt/depth") 
 
     print("reading_dir", reading_dir)
     # Debugging: Print the image folder path
-    print(f"Image folder path: {image_folder_path}") #added 16:13
+    print(f"Image folder path: {image_folder_path}") 
     cam_infos_unsorted = readColmapCameras(cam_extrinsics= cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder =image_folder_path) #constructs CameraInfo objects (each image is associated with the corresponding camera and its parameters- intrinsics and extrinsics)
     cam_infos = sorted(cam_infos_unsorted.copy(), key=lambda x: x.image_name) #sorts CameraInfo objects by image name to ensure that the images and their corresponding camera parameters are correctly aligned
     #split cameras for training and testing 
@@ -861,13 +809,11 @@ def readCustomDatasetInfo(path, images, eval, llffhold=8):
     nerf_normalization = getNerfppNorm(train_cam_infos) #normalise the camera coordinates to ensure consistent input to the model (improves training convergence)
     ply_path = os.path.join(path, "colmap/sparse/0/points3D.ply")
     bin_path = os.path.join(path, "colmap/sparse/0/points3D.bin")
-    #txt_path = os.path.join(path, "colmap/sparse/0/points3D.txt")
+   
     if not os.path.exists(ply_path): #checks if the point cloud data ile exists 
         print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
-        #try:
+       
         xyz, rgb, _ = read_points3D_binary(bin_path)
-        #except:
-            #xyz, rgb, _ = read_points3D_text(txt_path)
         storePly(ply_path, xyz, rgb)
     
     try:

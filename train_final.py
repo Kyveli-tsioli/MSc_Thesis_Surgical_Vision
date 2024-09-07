@@ -31,7 +31,7 @@ import random
 import os, sys
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim, l2_loss, lpips_loss, l1_loss_depth, masked_l1_loss, l1_loss_mask
+from utils.loss_utils import l1_loss, ssim, l2_loss, lpips_loss, l1_loss_depth, l1_loss_mask
 from gaussian_renderer import render, network_gui, save_depth_map
 import sys
 from scene import Scene, GaussianModel
@@ -462,7 +462,7 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             else:
                 loss = Ll1 
             
-            loss.backward() #if this is here it means im training only for coarse stage
+            loss.backward() #if this is placed here it means im training only for coarse stage
             psnr_ = psnr(image_tensor, gt_image_tensor).mean().double() #measures image quality
        
         
